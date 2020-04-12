@@ -1,6 +1,6 @@
-%% creating sm_vs_fl_different_f:
+%% creating sm_vs_fl_different_f  CODE IN PYTHON NOT HERE:
 f = 0.01:0.01:0.99;
-arg = f.^2 + sqrt(f.^4+1);
+arg = f.^2 + sqrt(f.^4+4);
 se = 0.5*arg;
 
 denumenator = (0.5*arg+1).^2 - f.^2;

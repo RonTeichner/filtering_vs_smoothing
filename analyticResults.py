@@ -5,9 +5,10 @@ import matplotlib.cm as cm
 from analyticResults_func import *
 
 ####################################################################################################################
-enableFig_fig_1d_filt_f09 = True  # also fig_1d_smoothing_f09
+enableFig_fig_1d_filt_f09 = False  # also fig_1d_smoothing_f09
 enableFig_fig_1d_filt_f01 = False # also fig_1d_smoothing_f01
 enableFig_fig_1d_filt_const_err = False
+enableFig_sm_vs_fl_different_f = True
 
 if enableFig_fig_1d_filt_f09:
     beta = 0.9  # acceleration memory
@@ -102,3 +103,70 @@ if enableFig_fig_1d_filt_const_err:
     ax.set_title(r'constant $tr(\Sigma^F)$; different $\lambda(F)$ values')
     '''
     plt.show()
+
+if enableFig_sm_vs_fl_different_f:
+    f = np.arange(0.01, 0.99, 0.01)
+    fVec = np.arange(0.1, 1, 0.1)
+    processNoiseVar = 1
+    etaList = [0.1, 1, 10]
+    plt.figure(figsize=(12, 4))
+    plt.subplot(1,2,1)
+    for eta in etaList:
+        filteringErrorVariance_db = watt2db(steady_state_1d_filtering_err(processNoiseVar=processNoiseVar, eta=eta, f=f))
+        #smoothingErrorVariance_db = watt2db(steady_state_1d_smoothing_err(processNoiseVar=processNoiseVar, eta=eta, f=f))
+        plt.plot(f, filteringErrorVariance_db, label=r'$\sigma_e^2$; $\eta=%0.2f$' % eta)
+        #plt.plot(f, smoothingErrorVariance_db, label=r'$\sigma_{e,s}^2$; $\eta=%0.2f$' % eta)
+
+        varEstErr = np.zeros_like(fVec)
+        for fIdx in range(fVec.size):
+            fsim = fVec[fIdx]
+            print(f'starting f={fsim}')
+            varEstErr[fIdx], _ = simVarEst(fsim, processNoiseVar, eta)
+        plt.plot(fVec, watt2db(varEstErr), linestyle='None', marker="+", color='k')
+    plt.plot(fVec, watt2db(varEstErr), linestyle='None', marker="+", color='k', label='simulation')
+
+    #plt.text(0.6, 0.75, r'$\eta=1$')
+    plt.xlabel('f')
+    plt.ylabel('dbW')
+    plt.grid()
+    plt.legend()
+    plt.title(r'Filtering estimation error variances; $\sigma_\omega^2 = %d$ [dbW]' % watt2db(processNoiseVar))
+
+    plt.subplot(1, 2, 2)
+    for eta in etaList:
+        #filteringErrorVariance_db = watt2db(steady_state_1d_filtering_err(processNoiseVar=processNoiseVar, eta=eta, f=f))
+        smoothingErrorVariance_db = watt2db(steady_state_1d_smoothing_err(processNoiseVar=processNoiseVar, eta=eta, f=f))
+        #plt.plot(f, filteringErrorVariance_db, label=r'$\sigma_e^2$; $\eta=%0.2f$' % eta)
+        plt.plot(f, smoothingErrorVariance_db, label=r'$\sigma_{e,s}^2$; $\eta=%0.2f$' % eta)
+
+        varEstErr_s = np.zeros_like(fVec)
+        for fIdx in range(fVec.size):
+            fsim = fVec[fIdx]
+            print(f'starting f={fsim}')
+            _, varEstErr_s[fIdx] = simVarEst(fsim, processNoiseVar, eta)
+        plt.plot(fVec, watt2db(varEstErr_s), linestyle='None', marker="+", color='k')
+    plt.plot(fVec, watt2db(varEstErr_s), linestyle='None', marker="+", color='k', label='simulation')
+
+    # plt.text(0.6, 0.75, r'$\eta=1$')
+    plt.xlabel('f')
+    plt.ylabel('dbW')
+    plt.grid()
+    plt.legend(loc='center', bbox_to_anchor=(0.8, 0.3))
+    plt.title(r'Smoothing estimation error variances; $\sigma_\omega^2 = %d$ [dbW]' % watt2db(processNoiseVar))
+    plt.show()
+    '''
+    eta = 1
+    fVec = np.arange(0.1, 1, 0.1)
+    varEstErr = np.zeros_like(fVec)
+    for fIdx in range(fVec.size):
+        f = fVec[fIdx]
+        print(f'starting f={f}')
+        varEstErr[fIdx] = simVarEst(f, processNoiseVar, eta)
+
+    plt.figure()
+    plt.plot(fVec, watt2db(varEstErr), linestyle='None', marker="+")
+    plt.xlabel(f)
+    plt.ylabel('dbW')
+    plt.grid()
+    plt.show()
+    '''
