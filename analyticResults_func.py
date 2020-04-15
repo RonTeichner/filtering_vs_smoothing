@@ -95,13 +95,13 @@ def calc_analytic_values(F, H, std_process_noises, std_meas_noises, firstDimOnly
         print(f'finished: {100*i/(std_process_noises.size * std_meas_noises.size)} %')
     return deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all
 
-def plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all, enable_db_Axis):
+def plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all, enable_db_Axis, with_respect_to_processNoise=False):
     d = sigma_bar_all.shape[-1]
 
     if enable_db_Axis:
-        std_process_noises_db = 20*np.log10(std_process_noises/std_process_noises[0])
-        std_meas_noises_db = 20*np.log10(std_meas_noises/std_meas_noises[0])
-        X, Y = np.meshgrid(std_process_noises_db, std_meas_noises_db)
+        std_process_noises_dbm = 20*np.log10(std_process_noises) + 30  #/std_process_noises[0])
+        std_meas_noises_dbm = 20*np.log10(std_meas_noises) + 30  #/std_meas_noises[0])
+        X, Y = np.meshgrid(std_process_noises_dbm, std_meas_noises_dbm)
     else:
         X, Y = np.meshgrid(np.power(std_process_noises, 2), np.power(std_meas_noises, 2))
 
@@ -110,43 +110,55 @@ def plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filter
     CS = ax.contour(X, Y, Z)
     ax.clabel(CS, inline=1, fontsize=10)
     if enable_db_Axis:
-        ax.set_ylabel('meas noise [db]')
-        ax.set_xlabel('process noise [db]')
+        ax.set_ylabel('meas noise [dbm]')
+        ax.set_xlabel('process noise [dbm]')
     else:
         ax.set_ylabel(r'$\sigma_v^2$')
         ax.set_xlabel(r'$\sigma_\omega^2$')
     ax.set_title(r'$\frac{tr(\Sigma^F)-tr(\Sigma^S)}{0.5(tr(\Sigma^F)+tr(\Sigma^S))}$')
     #plt.show()
 
-    Z = 10*np.log10(E_filtering)
-    Z = Z - Z.max()
+    if not(with_respect_to_processNoise):
+        Z = 10*np.log10(E_filtering) + 30
+        #Z = Z - Z.max()
+    else:
+        Z = 10*np.log10(E_filtering/np.power(std_process_noises, 2))
     fig, ax = plt.subplots()
     CS = ax.contour(X, Y, Z)
     ax.clabel(CS, inline=1, fontsize=10)
     if enable_db_Axis:
-        ax.set_ylabel('meas noise [db]')
-        ax.set_xlabel('process noise [db]')
+        ax.set_ylabel('meas noise [dbm]')
+        ax.set_xlabel('process noise [dbm]')
     else:
         ax.set_ylabel(r'$\sigma_v^2$')
         ax.set_xlabel(r'$\sigma_\omega^2$')
-    ax.set_title(r'$tr(\Sigma^F)$ [db]')
-    plt.plot(std_process_noises_db, std_meas_noises_db, 'r--')
+    if not (with_respect_to_processNoise):
+        ax.set_title(r'$tr(\Sigma^F)$ [dbm]')
+        plt.plot(std_process_noises_dbm, std_meas_noises_dbm, 'r--')
+    else:
+        ax.set_title(r'$tr(\Sigma^F)/\sigma_\omega^2$ [db]')
     plt.grid(True)
     #plt.show()
 
-    Z = 10*np.log10(E_smoothing)
-    Z = Z - Z.max()
+    if not (with_respect_to_processNoise):
+        Z = 10*np.log10(E_smoothing) + 30
+        #Z = Z - Z.max()
+    else:
+        Z = 10 * np.log10(E_smoothing / np.power(std_process_noises, 2))
     fig, ax = plt.subplots()
     CS = ax.contour(X, Y, Z)
     ax.clabel(CS, inline=1, fontsize=10)
     if enable_db_Axis:
-        ax.set_ylabel('meas noise [db]')
-        ax.set_xlabel('process noise [db]')
+        ax.set_ylabel('meas noise [dbm]')
+        ax.set_xlabel('process noise [dbm]')
     else:
         ax.set_ylabel(r'$\sigma_v^2$')
         ax.set_xlabel(r'$\sigma_\omega^2$')
-    ax.set_title(r'$tr(\Sigma^S)$ [db]')
-    plt.plot(std_process_noises_db, std_meas_noises_db, 'r--')
+    if not (with_respect_to_processNoise):
+        ax.set_title(r'$tr(\Sigma^S)$ [dbm]')
+        plt.plot(std_process_noises_dbm, std_meas_noises_dbm, 'r--')
+    else:
+        ax.set_title(r'$tr(\Sigma^S)/\sigma_\omega^2$ [db]')
     plt.grid(True)
     #plt.show()
     '''
@@ -171,8 +183,8 @@ def plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filter
         CS = ax.contour(X, Y, Z)
         ax.clabel(CS, inline=1, fontsize=10)
         if enable_db_Axis:
-            ax.set_ylabel('meas noise [db]')
-            ax.set_xlabel('process noise [db]')
+            ax.set_ylabel('meas noise [dbm]')
+            ax.set_xlabel('process noise [dbm]')
         else:
             ax.set_ylabel(r'$\sigma_v^2$')
             ax.set_xlabel(r'$\sigma_\omega^2$')
@@ -184,8 +196,8 @@ def plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filter
         CS = ax.contour(X, Y, Z)
         ax.clabel(CS, inline=1, fontsize=10)
         if enable_db_Axis:
-            ax.set_ylabel('meas noise [db]')
-            ax.set_xlabel('process noise [db]')
+            ax.set_ylabel('meas noise [dbm]')
+            ax.set_xlabel('process noise [dbm]')
         else:
             ax.set_ylabel(r'$\sigma_v^2$')
             ax.set_xlabel(r'$\sigma_\omega^2$')
@@ -198,8 +210,8 @@ def plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filter
         CS = ax.contour(X, Y, Z)
         ax.clabel(CS, inline=1, fontsize=10)
         if enable_db_Axis:
-            ax.set_ylabel('meas noise [db]')
-            ax.set_xlabel('process noise [db]')
+            ax.set_ylabel('meas noise [dbm]')
+            ax.set_xlabel('process noise [dbm]')
         else:
             ax.set_ylabel(r'$\sigma_v^2$')
             ax.set_xlabel(r'$\sigma_\omega^2$')
@@ -217,26 +229,41 @@ def steady_state_1d_smoothing_err(processNoiseVar, eta, f):
     errorVariance = 0.5*processNoiseVar*(gamma - (0.5*(0.5*gamma+eta)*np.power(gamma, 2))/(np.power(0.5*gamma+eta, 2) - np.power(f*eta, 2)))
     return errorVariance
 
-def gen_1d_measurements(f, processNoiseVar, measurementNoiseVar, initState, N):
+def steady_state_1d_Delta_FS(processNoiseVar, eta, f):
+    gamma = steady_state_1d_filtering_err(processNoiseVar, eta, f) / (0.5 * processNoiseVar)
+    arg = gamma * (0.5*gamma+eta) / (np.power(0.5*gamma+eta, 2) - np.power(f, 2)*np.power(eta, 2))
+    Delta_FS = arg / (2-0.5*arg)
+    return Delta_FS
+
+def gen_1d_measurements(f, processNoiseVar, measurementNoiseVar, initState, N, unmodeledParamsDict = {}, enableUnmodeled = False):
+    # unmodeled behaviour:
+    unmodeledBehaiour = np.zeros((N, 1, 1))
+    if enableUnmodeled:
+        alpha, fs = unmodeledParamsDict['alpha'], unmodeledParamsDict['fs']
+        phi_0 = np.random.rand()*(2*np.pi)
+        unmodeledBehaiour[:, 0, 0] = np.sin(2*np.pi*f/fs*np.arange(0, N) + phi_0)
+    else:
+        alpha = 0
+
     # generate state
     x, z = np.zeros((N, 1, 1)), np.zeros((N, 1, 1))
     x[0] = initState
     processNoises = np.sqrt(processNoiseVar) * np.random.randn(N)
     measurementNoises = np.sqrt(measurementNoiseVar) * np.random.randn(N)
-    z[0] = x[0] + measurementNoises[0]
+    z[0] = x[0] + unmodeledBehaiour[0] + measurementNoises[0]
     for i in range(1, N):
         x[i] = f*x[i-1] + processNoises[i]
-        z[i] = x[i] + measurementNoises[i]
+        z[i] = x[i] + alpha*unmodeledBehaiour[i] + measurementNoises[i]
     return x, z
 
-def simVarEst(f, processNoiseVar, eta):
+def simVarEst(f, processNoiseVar, eta, unmodeledParamsDict = {}, enableUnmodeled = False):
     nIter = 10
     N = 10000
-    measurementNoiseVar = processNoiseVar / eta
+    measurementNoiseVar = eta / processNoiseVar
     x_err_array, x_err_s_array = np.array([]), np.array([])
     for i in range(nIter):
         k_filter = KalmanFilter(dim_x=1, dim_z=1)
-        x, z = gen_1d_measurements(f, processNoiseVar, measurementNoiseVar, np.sqrt(k_filter.P) * np.random.randn(1, 1), N)
+        x, z = gen_1d_measurements(f, processNoiseVar, measurementNoiseVar, np.sqrt(k_filter.P) * np.random.randn(1, 1), N, unmodeledParamsDict, enableUnmodeled)
 
         filterStateInit = np.sqrt(k_filter.P) * np.random.randn(1, 1)  # 1D only!
         k_filter.x = filterStateInit
@@ -278,7 +305,7 @@ def simVarEst(f, processNoiseVar, eta):
     plt.grid()
     plt.show()
     '''
-    return np.var(x_err_array), np.var(x_err_s_array)
+    return np.var(x_err_array), np.var(x_err_s_array), x_err_array, x_err_s_array
 
 def dbm2var(x_dbm):
     return np.power(10, np.divide(x_dbm - 30, 10))

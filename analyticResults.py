@@ -6,9 +6,57 @@ from analyticResults_func import *
 
 ####################################################################################################################
 enableFig_fig_1d_filt_f09 = False  # also fig_1d_smoothing_f09
-enableFig_fig_1d_filt_f01 = False # also fig_1d_smoothing_f01
+enableFig_fig_1d_filt_f01 = False  # also fig_1d_smoothing_f01
 enableFig_fig_1d_filt_const_err = False
-enableFig_sm_vs_fl_different_f = True
+enableFig_sm_vs_fl_different_f = False  # also \Delta_{FS}
+enableFig_conclusions = False
+enableUnmodeledBehaviourSim = True
+
+if enableFig_conclusions:
+    std_process_noises = 1
+    processNoiseVar = np.power(std_process_noises, 2)
+    std_meas_noises = np.logspace(np.log10(1e-1), np.log10(1e1), 1000, base=10.0)  # np.arange(1e-4, 20e-3, 1e-4)
+    etaVals = np.power(std_meas_noises, 2) / np.power(std_process_noises, 2)
+    fVals = np.linspace(0.01, 0.99, 100)
+
+    Delta_FS, E_filtering, E_smoothing = np.zeros((etaVals.size, fVals.size)), np.zeros((etaVals.size, fVals.size)), np.zeros((etaVals.size, fVals.size))
+    for etaIdx in range(etaVals.size):
+        eta = etaVals[etaIdx]
+        for fIdx in range(fVals.size):
+            f = fVals[fIdx]
+            E_filtering[etaIdx, fIdx] = steady_state_1d_filtering_err(processNoiseVar, eta, f)
+            E_smoothing[etaIdx, fIdx] = steady_state_1d_smoothing_err(processNoiseVar, eta, f)
+            Delta_FS[etaIdx, fIdx] = steady_state_1d_Delta_FS(processNoiseVar, eta, f)
+
+    etaVals_db = watt2db(etaVals)
+    X, Y = np.meshgrid(fVals, etaVals_db)
+
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(14, 6))
+    Z = watt2dbm(E_filtering)
+    CS = ax1.contour(X, Y, Z)
+    ax1.clabel(CS, inline=1, fontsize=8)
+    ax1.set_ylabel(r'$\eta$ [db]')
+    ax1.set_xlabel('f')
+    ax1.set_title(r'$tr(\Sigma^F)$ [dbm]; $\sigma_\omega^2=0$ [dbW]')
+    ax1.grid(True)
+
+    Z = watt2dbm(E_smoothing)
+    CS = ax2.contour(X, Y, Z)
+    ax2.clabel(CS, inline=1, fontsize=8)
+    #ax2.set_ylabel(r'$\eta$ [db]')
+    ax2.set_xlabel('f')
+    ax2.set_title(r'$tr(\Sigma^S)$ [dbm]; $\sigma_\omega^2=0$ [dbW]')
+    ax2.grid(True)
+
+    Z = Delta_FS
+    CS = ax3.contour(X, Y, Z)
+    ax3.clabel(CS, inline=1, fontsize=8)
+    #ax3.set_ylabel(r'$\eta$ [db]')
+    ax3.set_xlabel('f')
+    ax3.set_title(r'$\Delta_{FS}$')
+    ax3.grid(True)
+    plt.show()
+
 
 if enableFig_fig_1d_filt_f09:
     beta = 0.9  # acceleration memory
@@ -26,7 +74,8 @@ if enableFig_fig_1d_filt_f09:
     F = F[0:1, 0:1]
     H = H[0:1]
     deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all = calc_analytic_values(F, H, std_process_noises, std_meas_noises, firstDimOnly=True)
-    plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all, enable_db_Axis=True)
+    plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all, enable_db_Axis=True, with_respect_to_processNoise=False)
+    plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all, enable_db_Axis=True, with_respect_to_processNoise=True)
 
 if enableFig_fig_1d_filt_f01:
     beta = 0.1  # acceleration memory
@@ -43,7 +92,8 @@ if enableFig_fig_1d_filt_f01:
     F = F[0:1, 0:1]
     H = H[0:1]
     deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all = calc_analytic_values(F, H, std_process_noises, std_meas_noises, firstDimOnly=True)
-    plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all, enable_db_Axis=True)
+    plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all, enable_db_Axis=True, with_respect_to_processNoise=False)
+    plot_analytic_figures(std_process_noises, std_meas_noises, deltaFS, E_filtering, E_smoothing, sigma_bar_all, sigma_j_k_all, enable_db_Axis=True, with_respect_to_processNoise=True)
 
 if enableFig_fig_1d_filt_const_err:
     beta = np.array([0.2, 0.9999999999])  # np.arange(0.1, 0.3, 0.1)  # acceleration memory
@@ -105,25 +155,27 @@ if enableFig_fig_1d_filt_const_err:
     plt.show()
 
 if enableFig_sm_vs_fl_different_f:
+    enableSim = True
     f = np.arange(0.01, 0.99, 0.01)
     fVec = np.arange(0.1, 1, 0.1)
     processNoiseVar = 1
     etaList = [0.1, 1, 10]
     plt.figure(figsize=(12, 4))
-    plt.subplot(1,2,1)
+    plt.subplot(1, 2, 1)
     for eta in etaList:
         filteringErrorVariance_db = watt2db(steady_state_1d_filtering_err(processNoiseVar=processNoiseVar, eta=eta, f=f))
         #smoothingErrorVariance_db = watt2db(steady_state_1d_smoothing_err(processNoiseVar=processNoiseVar, eta=eta, f=f))
         plt.plot(f, filteringErrorVariance_db, label=r'$\sigma_e^2$; $\eta=%0.2f$' % eta)
         #plt.plot(f, smoothingErrorVariance_db, label=r'$\sigma_{e,s}^2$; $\eta=%0.2f$' % eta)
-
-        varEstErr = np.zeros_like(fVec)
-        for fIdx in range(fVec.size):
-            fsim = fVec[fIdx]
-            print(f'starting f={fsim}')
-            varEstErr[fIdx], _ = simVarEst(fsim, processNoiseVar, eta)
-        plt.plot(fVec, watt2db(varEstErr), linestyle='None', marker="+", color='k')
-    plt.plot(fVec, watt2db(varEstErr), linestyle='None', marker="+", color='k', label='simulation')
+        if enableSim:
+            varEstErr = np.zeros_like(fVec)
+            for fIdx in range(fVec.size):
+                fsim = fVec[fIdx]
+                print(f'starting f={fsim}')
+                varEstErr[fIdx], _, _, _ = simVarEst(fsim, processNoiseVar, eta)
+            plt.plot(fVec, watt2db(varEstErr), linestyle='None', marker="+", color='k')
+    if enableSim:
+        plt.plot(fVec, watt2db(varEstErr), linestyle='None', marker="+", color='k', label='simulation')
 
     #plt.text(0.6, 0.75, r'$\eta=1$')
     plt.xlabel('f')
@@ -138,14 +190,16 @@ if enableFig_sm_vs_fl_different_f:
         smoothingErrorVariance_db = watt2db(steady_state_1d_smoothing_err(processNoiseVar=processNoiseVar, eta=eta, f=f))
         #plt.plot(f, filteringErrorVariance_db, label=r'$\sigma_e^2$; $\eta=%0.2f$' % eta)
         plt.plot(f, smoothingErrorVariance_db, label=r'$\sigma_{e,s}^2$; $\eta=%0.2f$' % eta)
-
-        varEstErr_s = np.zeros_like(fVec)
-        for fIdx in range(fVec.size):
-            fsim = fVec[fIdx]
-            print(f'starting f={fsim}')
-            _, varEstErr_s[fIdx] = simVarEst(fsim, processNoiseVar, eta)
-        plt.plot(fVec, watt2db(varEstErr_s), linestyle='None', marker="+", color='k')
-    plt.plot(fVec, watt2db(varEstErr_s), linestyle='None', marker="+", color='k', label='simulation')
+        if enableSim:
+            varEstErr_s = np.zeros_like(fVec)
+            for fIdx in range(fVec.size):
+                fsim = fVec[fIdx]
+                print(f'starting f={fsim}')
+                _, varEstErr_s[fIdx], _, _ = simVarEst(fsim, processNoiseVar, eta)
+            plt.plot(fVec, watt2db(varEstErr_s), linestyle='None', marker="+", color='k')
+            print(f'eta={eta}; {watt2db(varEstErr_s)}')
+    if enableSim:
+        plt.plot(fVec, watt2db(varEstErr_s), linestyle='None', marker="+", color='k', label='simulation')
 
     # plt.text(0.6, 0.75, r'$\eta=1$')
     plt.xlabel('f')
@@ -153,7 +207,7 @@ if enableFig_sm_vs_fl_different_f:
     plt.grid()
     plt.legend(loc='center', bbox_to_anchor=(0.8, 0.3))
     plt.title(r'Smoothing estimation error variances; $\sigma_\omega^2 = %d$ [dbW]' % watt2db(processNoiseVar))
-    plt.show()
+    #plt.show()
     '''
     eta = 1
     fVec = np.arange(0.1, 1, 0.1)
@@ -170,3 +224,44 @@ if enableFig_sm_vs_fl_different_f:
     plt.grid()
     plt.show()
     '''
+    plt.figure(figsize=(6, 4))
+    for eta in etaList:
+        Delta_FS = steady_state_1d_Delta_FS(processNoiseVar=processNoiseVar, eta=eta, f=f)
+        plt.plot(f, Delta_FS, label=r'$\Delta_{FS}$; $\eta=%0.2f$' % eta)
+    plt.xlabel('f')
+    plt.grid()
+    plt.legend(loc='center', bbox_to_anchor=(0.2, 0.7))
+    plt.title(r'$\Delta_{FS}$: Smoothing vs filtering error')
+    plt.show()
+
+if enableUnmodeledBehaviourSim:
+    fVec = np.arange(0.1, 1, 0.4)
+    processNoiseVar = 1
+    etaList = [0.1]#, 1, 10]
+
+    unmodeledParamsDict = {}
+    unmodeledParamsDict['alpha'] = 0.75
+    unmodeledParamsDict['fs'] = 10
+
+    for eta in etaList:
+        for fIdx in range(fVec.size):
+            fsim = fVec[fIdx]
+            # correct model performance:
+            filteringErrorVariance = steady_state_1d_filtering_err(processNoiseVar=processNoiseVar, eta=eta, f=fsim)
+            smoothingErrorVariance = steady_state_1d_smoothing_err(processNoiseVar=processNoiseVar, eta=eta, f=fsim)
+            filteringSynthesisErrorsCorrectModel = np.sqrt(filteringErrorVariance) * np.random.randn(100000)
+            smoothingSynthesisErrorsCorrectModel = np.sqrt(smoothingErrorVariance) * np.random.randn(100000)
+
+            _, _, filteringErrors, smoothingErrors = simVarEst(fsim, processNoiseVar, eta, unmodeledParamsDict=unmodeledParamsDict, enableUnmodeled=True)
+
+            plt.figure()
+            n_bins = 1000
+            #n, bins, patches = plt.hist(volt2dbm(np.abs(filteringSynthesisErrorsCorrectModel)), n_bins, density=True, histtype='step', cumulative=True, label=r'filtering $\alpha=0$')
+            #n, bins, patches = plt.hist(volt2dbm(np.abs(smoothingSynthesisErrorsCorrectModel)), n_bins, density=True, histtype='step', cumulative=True, label=r'smoothing $\alpha=0$')
+            n, bins, patches = plt.hist(volt2dbm(np.abs(filteringErrors)), n_bins, density=True, histtype='step', cumulative=True, label=r'filtering $\alpha=%0.2f$' % unmodeledParamsDict['alpha'])
+            n, bins, patches = plt.hist(volt2dbm(np.abs(smoothingErrors)), n_bins, density=True, histtype='step', cumulative=True, label=r'smoothing $\alpha=%0.2f$' % unmodeledParamsDict['alpha'])
+            plt.xlabel('dbm')
+            plt.title(r'CDF of estimation errors; f=%0.1f; $\sigma_\omega^2=$%0.2f; $\sigma_v^2$=%0.2f' % (fsim, processNoiseVar, eta*processNoiseVar))
+            plt.grid(True)
+            plt.legend(loc='upper left')
+    plt.show()

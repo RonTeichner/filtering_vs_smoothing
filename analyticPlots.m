@@ -22,7 +22,7 @@ title('Estimation error variances for $\sigma_\omega^2=\sigma_v^2$','Interpreter
 
 %% creating delta_FS vs f:
 f = 0.01:0.01:0.99;
-gamma = f.^2 + sqrt(f.^4+1);
+gamma = f.^2 + sqrt(f.^4+4);
 eta = 1;
 numenator = 0.5*gamma + eta;
 denumenator = (0.5*gamma + eta).^2 - f.^2*eta^2;
