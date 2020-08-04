@@ -172,7 +172,7 @@ if enableFig_sm_vs_fl_different_f:
             for fIdx in range(fVec.size):
                 fsim = fVec[fIdx]
                 print(f'starting f={fsim}')
-                varEstErr[fIdx], _, _, _ = simVarEst(fsim, processNoiseVar, eta)
+                varEstErr[fIdx], _, _, _, _, _ = simVarEst(fsim, processNoiseVar, eta)
             plt.plot(fVec, watt2db(varEstErr), linestyle='None', marker="+", color='k')
     if enableSim:
         plt.plot(fVec, watt2db(varEstErr), linestyle='None', marker="+", color='k', label='simulation')
@@ -195,7 +195,7 @@ if enableFig_sm_vs_fl_different_f:
             for fIdx in range(fVec.size):
                 fsim = fVec[fIdx]
                 print(f'starting f={fsim}')
-                _, varEstErr_s[fIdx], _, _ = simVarEst(fsim, processNoiseVar, eta)
+                _, varEstErr_s[fIdx], _, _, _, _ = simVarEst(fsim, processNoiseVar, eta)
             plt.plot(fVec, watt2db(varEstErr_s), linestyle='None', marker="+", color='k')
             print(f'eta={eta}; {watt2db(varEstErr_s)}')
     if enableSim:
@@ -252,8 +252,8 @@ if enableUnmodeledBehaviourSim:
             filteringSynthesisErrorsCorrectModel = np.sqrt(filteringErrorVariance) * np.random.randn(100000)
             smoothingSynthesisErrorsCorrectModel = np.sqrt(smoothingErrorVariance) * np.random.randn(100000)
 
-            _, _, filteringErrors, smoothingErrors = simVarEst(fsim, processNoiseVar, eta, unmodeledParamsDict=unmodeledParamsDict, enableUnmodeled=True)
-
+            _, _, filteringErrors, smoothingErrors, meanPowerModeled, meanPowerUnmodeled = simVarEst(fsim, processNoiseVar, eta, unmodeledParamsDict=unmodeledParamsDict, enableUnmodeled=True)
+            modeledToUnmodeled_db = watt2db(meanPowerModeled/meanPowerUnmodeled)
             plt.figure()
             n_bins = 1000
             #n, bins, patches = plt.hist(volt2dbm(np.abs(filteringSynthesisErrorsCorrectModel)), n_bins, density=True, histtype='step', cumulative=True, label=r'filtering $\alpha=0$')
@@ -261,7 +261,8 @@ if enableUnmodeledBehaviourSim:
             n, bins, patches = plt.hist(volt2dbm(np.abs(filteringErrors)), n_bins, density=True, histtype='step', cumulative=True, label=r'filtering $\alpha=%0.2f$' % unmodeledParamsDict['alpha'])
             n, bins, patches = plt.hist(volt2dbm(np.abs(smoothingErrors)), n_bins, density=True, histtype='step', cumulative=True, label=r'smoothing $\alpha=%0.2f$' % unmodeledParamsDict['alpha'])
             plt.xlabel('dbm')
-            plt.title(r'CDF of estimation errors; f=%0.1f; $\sigma_\omega^2=$%0.2f; $\sigma_v^2$=%0.2f' % (fsim, processNoiseVar, eta*processNoiseVar))
+            plt.title(r'CDF of estimation errors; f=%0.1f; $\sigma_\omega^2=$%0.2f; $\sigma_v^2$=%0.2f; SIR=%0.2f [db]' % (fsim, processNoiseVar, eta*processNoiseVar, modeledToUnmodeled_db))
             plt.grid(True)
             plt.legend(loc='upper left')
+            plt.xlim(-20, 40)
     plt.show()

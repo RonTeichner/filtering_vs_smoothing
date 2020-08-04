@@ -247,14 +247,18 @@ def gen_1d_measurements(f, processNoiseVar, measurementNoiseVar, initState, N, u
 
     # generate state
     x, z = np.zeros((N, 1, 1)), np.zeros((N, 1, 1))
+    modeldPower, unmodeledPower = np.zeros(N), np.zeros(N)  # Watt
     x[0] = initState
     processNoises = np.sqrt(processNoiseVar) * np.random.randn(N)
     measurementNoises = np.sqrt(measurementNoiseVar) * np.random.randn(N)
     z[0] = x[0] + unmodeledBehaiour[0] + measurementNoises[0]
+    modeldPower[0], unmodeledPower[0] = np.power(x[0], 2), np.power(unmodeledBehaiour[0,0,0], 2)
     for i in range(1, N):
         x[i] = f*x[i-1] + processNoises[i]
         z[i] = x[i] + alpha*unmodeledBehaiour[i] + measurementNoises[i]
-    return x, z
+
+        modeldPower[i], unmodeledPower[i] = np.power(x[i, 0, 0], 2), np.power(alpha*unmodeledBehaiour[i, 0, 0], 2)
+    return x, z, modeldPower.mean(), unmodeledPower.mean()
 
 def simVarEst(f, processNoiseVar, eta, unmodeledParamsDict = {}, enableUnmodeled = False):
     nIter = 10
@@ -263,7 +267,7 @@ def simVarEst(f, processNoiseVar, eta, unmodeledParamsDict = {}, enableUnmodeled
     x_err_array, x_err_s_array = np.array([]), np.array([])
     for i in range(nIter):
         k_filter = KalmanFilter(dim_x=1, dim_z=1)
-        x, z = gen_1d_measurements(f, processNoiseVar, measurementNoiseVar, np.sqrt(k_filter.P) * np.random.randn(1, 1), N, unmodeledParamsDict, enableUnmodeled)
+        x, z, meanModeledPower, meanUnmodeledPower = gen_1d_measurements(f, processNoiseVar, measurementNoiseVar, np.sqrt(k_filter.P) * np.random.randn(1, 1), N, unmodeledParamsDict, enableUnmodeled)
 
         filterStateInit = np.sqrt(k_filter.P) * np.random.randn(1, 1)  # 1D only!
         k_filter.x = filterStateInit
@@ -305,7 +309,7 @@ def simVarEst(f, processNoiseVar, eta, unmodeledParamsDict = {}, enableUnmodeled
     plt.grid()
     plt.show()
     '''
-    return np.var(x_err_array), np.var(x_err_s_array), x_err_array, x_err_s_array
+    return np.var(x_err_array), np.var(x_err_s_array), x_err_array, x_err_s_array, meanModeledPower, meanUnmodeledPower
 
 def dbm2var(x_dbm):
     return np.power(10, np.divide(x_dbm - 30, 10))
