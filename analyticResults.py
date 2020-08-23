@@ -10,7 +10,8 @@ enableFig_fig_1d_filt_f01 = False  # also fig_1d_smoothing_f01
 enableFig_fig_1d_filt_const_err = False
 enableFig_sm_vs_fl_different_f = False  # also \Delta_{FS}
 enableFig_conclusions = False
-enableUnmodeledBehaviourSim = True
+enableUnmodeledBehaviourSim = False
+enableUnmodeledBehaviourHighDimSim = True
 
 if enableFig_conclusions:
     std_process_noises = 1
@@ -266,3 +267,18 @@ if enableUnmodeledBehaviourSim:
             plt.legend(loc='upper left')
             plt.xlim(-20, 40)
     plt.show()
+
+if enableUnmodeledBehaviourHighDimSim:
+    xdim, zdim = 5, 3
+    # draw F with max eigenvalue of 1
+    F = np.random.randn(xdim, xdim)
+    eigAbsMax = np.abs(np.linalg.eigvals(F)).max()
+    F = F/eigAbsMax
+
+    H = np.random.randn(xdim, zdim)
+
+    processNoiseVar, measurementNoiseVar = 1, 1
+
+    traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing = simCovEst(F, H, processNoiseVar, measurementNoiseVar)
+
+    x = 3

@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from filterpy.kalman import KalmanFilter, update, predict, batch_filter
 from filterpy.common import Q_discrete_white_noise, kinematic_kf, Saver
-from scipy.linalg import block_diag, norm
+from scipy.linalg import solve_discrete_are, solve_discrete_lyapunov
 from scipy.spatial.distance import mahalanobis as scipy_mahalanobis
 
 def calc_sigma_bar(H, R, F, Q):
@@ -310,6 +310,84 @@ def simVarEst(f, processNoiseVar, eta, unmodeledParamsDict = {}, enableUnmodeled
     plt.show()
     '''
     return np.var(x_err_array), np.var(x_err_s_array), x_err_array, x_err_s_array, meanModeledPower, meanUnmodeledPower
+
+
+def gen_measurements(F, H, Q, R, P, N):
+    dim_x, dim_z = F.shape[0], H.shape[0]
+    # generate state
+    x, z = np.zeros((N, dim_x, 1)), np.zeros((N, dim_z, 1))
+
+    x[0] = np.dot(np.linalg.cholesky(P), np.random.randn(dim_x, 1))
+
+    processNoises = np.expand_dims(np.dot(np.linalg.cholesky(Q), np.random.randn(dim_x, N)).transpose(), -1)
+    measurementNoises = np.expand_dims(np.dot(np.linalg.cholesky(R), np.random.randn(dim_z, N)).transpose(), -1)
+
+    for i in range(1, N):
+        x[i] = np.dot(F, x[i-1]) + processNoises[i-1]
+
+    z = np.matmul(H, x) + measurementNoises
+
+    return x, z
+
+def simCovEst(F, H, processNoiseVar, measurementNoiseVar):
+    nIter = 10
+    N = 10000
+
+    dim_x, dim_z = F.shape[0], H.shape[1]
+
+    k_filter = KalmanFilter(dim_x=dim_x, dim_z=dim_z)
+    k_filter.Q = processNoiseVar * np.eye(dim_x)
+    k_filter.R = measurementNoiseVar * np.eye(dim_z)
+    k_filter.H = H.transpose()
+    k_filter.F = F
+
+    theoreticalBarSigma = solve_discrete_are(a=np.transpose(k_filter.F), b=np.transpose(k_filter.H), q=k_filter.Q, r=k_filter.R)
+    steadyKalmanGain = np.dot(k_filter.F, np.dot(theoreticalBarSigma, np.dot(np.transpose(k_filter.H), np.linalg.inv(np.dot(k_filter.H, np.dot(theoreticalBarSigma, np.transpose(k_filter.H))) + k_filter.R))))
+    tildeF = k_filter.F - np.dot(steadyKalmanGain, k_filter.H)
+    theoreticalSmoothingFilteringDiff = solve_discrete_lyapunov(a=np.dot(theoreticalBarSigma, np.dot(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma))) , q=np.dot(np.dot(theoreticalBarSigma, np.dot(np.transpose(k_filter.H), np.linalg.inv(np.dot(k_filter.H, np.dot(theoreticalBarSigma, np.transpose(k_filter.H))) + k_filter.R))), np.dot(k_filter.H, theoreticalBarSigma)))
+    theoreticalSmoothingSigma = theoreticalBarSigma - theoreticalSmoothingFilteringDiff
+
+    x_err_f_array, x_err_s_array = np.array([]), np.array([])
+    for i in range(nIter):
+
+        filterStateInit = np.dot(np.linalg.cholesky(k_filter.P), np.random.randn(dim_x, 1))
+        k_filter.x = filterStateInit
+
+        x, z = gen_measurements(k_filter.F, k_filter.H, k_filter.Q, k_filter.R, k_filter.P, N)
+
+        # run filter:
+        x_est, cov, x_est_f, _ = k_filter.batch_filter(zs=z, update_first=False)
+        x_est_s, _, _, _ = k_filter.rts_smoother(x_est, cov)
+        # x_est[k] has the estimation of x[k] given z[k]. so for compatability with Anderson we should propagate x_est:
+        # x_est[1:] = k_filter.F * x_est[:-1]
+        # x_est_f is compatible with Anderson
+        '''
+        x_est, k_gain, x_err = np.zeros((N, 1, 1)), np.zeros((N, 1, 1)), np.zeros((N, 1, 1))
+        x_est[0] = filterStateInit
+        for k in range(1, N):
+            k_filter.predict()
+            k_filter.update(z[k-1])
+            x_est[k], k_gain[k] = k_filter.x, k_filter.K
+        '''
+        x_err_f = np.power(np.linalg.norm(x - x_est_f, axis=1), 2)
+        x_err_f_array = np.append(x_err_f_array, x_err_f[int(np.round(3 / 4 * N)):].squeeze())
+        x_err_s = np.power(np.linalg.norm(x - x_est_s, axis=1), 2)
+        x_err_s_array = np.append(x_err_s_array, x_err_s[int(np.round(3 / 8 * N)):int(np.round(5 / 8 * N))].squeeze())
+        '''
+        plt.plot(k_gain.squeeze()[1:])
+        plt.title('kalman gain')
+        plt.show()
+        '''
+    '''
+    plt.figure()
+    n_bins = 100
+    n, bins, patches = plt.hist(volt2dbW(np.abs(x_err_array)), n_bins, density=True, histtype='step', cumulative=True, label='hist')
+    plt.xlabel(r'$\sigma_e^2$ [dbW]')
+    plt.title(r'CDF of $\sigma_e^2$; f=%0.1f' % f)
+    plt.grid()
+    plt.show()
+    '''
+    return np.mean(x_err_f_array), np.mean(x_err_s_array), np.trace(theoreticalBarSigma), np.trace(theoreticalSmoothingSigma)
 
 def dbm2var(x_dbm):
     return np.power(10, np.divide(x_dbm - 30, 10))
