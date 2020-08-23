@@ -349,6 +349,14 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar, unmodeledNoiseVar):
     theoreticalSmoothingFilteringDiff = solve_discrete_lyapunov(a=np.dot(theoreticalBarSigma, np.dot(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma))) , q=DeltaFirstSample)
     theoreticalSmoothingSigma = theoreticalBarSigma - theoreticalSmoothingFilteringDiff
 
+    KH_t = np.dot(steadyKalmanGain, k_filter.H)
+    tildeR = solve_discrete_lyapunov(a=tildeF, q=np.dot(KH_t, np.transpose(KH_t)))
+    # TODO: verify the tildeR == the sum
+    Ka_0H_t = np.dot(Ka_0, k_filter.H)
+    unmodeledNormalizedDecrasePerformanceMat = np.dot(Ka_0H_t, np.dot(tildeR + np.eye(tildeR.shape[0]), np.transpose(Ka_0H_t))) - (np.dot(Ka_0H_t, tildeR) + np.dot(tildeR, np.transpose(Ka_0H_t)))
+
+    theoreticalThresholdUnmodeledNoiseVar = np.trace(DeltaFirstSample) / np.trace(unmodeledNormalizedDecrasePerformanceMat)
+
     x_err_f_array, x_err_s_array = np.array([]), np.array([])
     for i in range(nIter):
 
@@ -389,7 +397,7 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar, unmodeledNoiseVar):
     plt.grid()
     plt.show()
     '''
-    return np.mean(x_err_f_array), np.mean(x_err_s_array), np.trace(theoreticalBarSigma), np.trace(theoreticalSmoothingSigma)
+    return np.mean(x_err_f_array), np.mean(x_err_s_array), np.trace(theoreticalBarSigma), np.trace(theoreticalSmoothingSigma), theoreticalThresholdUnmodeledNoiseVar
 
 def dbm2var(x_dbm):
     return np.power(10, np.divide(x_dbm - 30, 10))

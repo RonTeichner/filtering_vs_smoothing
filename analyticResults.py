@@ -279,6 +279,6 @@ if enableUnmodeledBehaviourHighDimSim:
 
     processNoiseVar, measurementNoiseVar = 1, 1
     unmodeledNoiseVar = 0
-    traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing = simCovEst(F, H, processNoiseVar, measurementNoiseVar, unmodeledNoiseVar)
+    traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar = simCovEst(F, H, processNoiseVar, measurementNoiseVar, unmodeledNoiseVar)
 
     x = 3
