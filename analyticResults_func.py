@@ -329,7 +329,7 @@ def gen_measurements(F, H, Q, R, P, N):
 
     return x, z
 
-def simCovEst(F, H, processNoiseVar, measurementNoiseVar):
+def simCovEst(F, H, processNoiseVar, measurementNoiseVar, unmodeledNoiseVar):
     nIter = 10
     N = 10000
 
@@ -342,9 +342,11 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar):
     k_filter.F = F
 
     theoreticalBarSigma = solve_discrete_are(a=np.transpose(k_filter.F), b=np.transpose(k_filter.H), q=k_filter.Q, r=k_filter.R)
-    steadyKalmanGain = np.dot(k_filter.F, np.dot(theoreticalBarSigma, np.dot(np.transpose(k_filter.H), np.linalg.inv(np.dot(k_filter.H, np.dot(theoreticalBarSigma, np.transpose(k_filter.H))) + k_filter.R))))
+    Ka_0 = np.dot(theoreticalBarSigma, np.dot(np.transpose(k_filter.H), np.linalg.inv(np.dot(k_filter.H, np.dot(theoreticalBarSigma, np.transpose(k_filter.H))) + k_filter.R)))# first smoothing gain
+    DeltaFirstSample = np.dot(Ka_0, np.dot(k_filter.H, theoreticalBarSigma))
+    steadyKalmanGain = np.dot(k_filter.F, Ka_0)
     tildeF = k_filter.F - np.dot(steadyKalmanGain, k_filter.H)
-    theoreticalSmoothingFilteringDiff = solve_discrete_lyapunov(a=np.dot(theoreticalBarSigma, np.dot(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma))) , q=np.dot(np.dot(theoreticalBarSigma, np.dot(np.transpose(k_filter.H), np.linalg.inv(np.dot(k_filter.H, np.dot(theoreticalBarSigma, np.transpose(k_filter.H))) + k_filter.R))), np.dot(k_filter.H, theoreticalBarSigma)))
+    theoreticalSmoothingFilteringDiff = solve_discrete_lyapunov(a=np.dot(theoreticalBarSigma, np.dot(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma))) , q=DeltaFirstSample)
     theoreticalSmoothingSigma = theoreticalBarSigma - theoreticalSmoothingFilteringDiff
 
     x_err_f_array, x_err_s_array = np.array([]), np.array([])

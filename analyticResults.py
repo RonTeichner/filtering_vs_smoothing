@@ -278,7 +278,7 @@ if enableUnmodeledBehaviourHighDimSim:
     H = np.random.randn(xdim, zdim)
 
     processNoiseVar, measurementNoiseVar = 1, 1
-
-    traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing = simCovEst(F, H, processNoiseVar, measurementNoiseVar)
+    unmodeledNoiseVar = 0
+    traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing = simCovEst(F, H, processNoiseVar, measurementNoiseVar, unmodeledNoiseVar)
 
     x = 3
