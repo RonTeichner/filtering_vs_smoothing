@@ -276,6 +276,7 @@ if enableUnmodeledBehaviourHighDimSim:
     F = F/eigAbsMax
 
     H = np.random.randn(xdim, zdim)
+    H = H/np.linalg.norm(H)
 
     processNoiseVar, measurementNoiseVar = 1, 1
     unmodeledNoiseVar = 0
