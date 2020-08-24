@@ -269,6 +269,9 @@ if enableUnmodeledBehaviourSim:
     plt.show()
 
 if enableUnmodeledBehaviourHighDimSim:
+    #np.random.seed(11) # gives unmodeled noise thr of 6.44
+    np.random.seed(10)  # gives unmodeled noise thr of -29.08
+
     xdim, zdim = 5, 3
     # draw F with max eigenvalue of 1
     F = np.random.randn(xdim, xdim)
@@ -279,7 +282,35 @@ if enableUnmodeledBehaviourHighDimSim:
     H = H/np.linalg.norm(H)
 
     processNoiseVar, measurementNoiseVar = 1, 1
-    unmodeledNoiseVar = 0
-    traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar = simCovEst(F, H, processNoiseVar, measurementNoiseVar, unmodeledNoiseVar)
 
-    x = 3
+    traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar, unmodeledNoiseVarVec, firstMeasTraceImprovement, theoreticalFirstMeasImprove, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u = simCovEst(F, H, processNoiseVar, measurementNoiseVar)
+
+    print('Modeled: Theoretical, empirical MSE filtering: %.2f,%.2f' %(theoreticalTraceCovFiltering, traceCovFiltering))
+    print('Modeled: Theoretical, empirical MSE smoothing: %.2f,%.2f' % (theoreticalTraceCovSmoothing, traceCovSmoothing))
+
+    print('Modeled: Theoretical, empirical first future measurement MSE improvement: %.2f,%.2f' % (theoreticalFirstMeasImprove, firstMeasTraceImprovement))
+    print('Modeled: Theoretical, empirical smoothing MSE improvement (all future measurements): %.2f,%.2f' % (theoreticalTraceCovFiltering-theoreticalTraceCovSmoothing, traceCovFiltering-traceCovSmoothing))
+
+    print('Theoretical maximal unmodeled noise var: %.2f' % (theoreticalThresholdUnmodeledNoiseVar))
+    if theoreticalThresholdUnmodeledNoiseVar > 0:
+        unmodeledNoiseVarVec_db = watt2db(unmodeledNoiseVarVec/theoreticalThresholdUnmodeledNoiseVar)
+    else:
+        unmodeledNoiseVarVec_db = watt2db(unmodeledNoiseVarVec / measurementNoiseVar)
+
+    plt.figure()
+    plt.plot(unmodeledNoiseVarVec_db, firstMeasTraceImprovement_u, label=r'Empirical $\Delta^{R:j}_{j-1 \mid j}$')
+    plt.plot(unmodeledNoiseVarVec_db, theoreticalFirstMeasImprove_u, '--', label=r'Theoretical $\Delta^{R:j}_{j-1 \mid j}$')
+    plt.plot(unmodeledNoiseVarVec_db, totalSmoothingImprovement_u, label=r'Empirical $\Delta^{R:j}_{j-1 \mid \infty}$')
+    if theoreticalThresholdUnmodeledNoiseVar > 0:
+        plt.xlabel(r'$\sigma_u^2$ [db] w.r.t $\bar{\sigma}_u^2$')
+    else:
+        plt.xlabel(r'$\sigma_u^2$ [db] w.r.t $\sigma_v^2$')
+    plt.ylabel('[W]')
+    plt.grid(True)
+    plt.legend()
+    plt.title('Difference between filtering and smoothing MSE')
+    plt.show()
+
+    #print('Unmodeled: Theoretical, empirical first future measurement MSE improvement: %.2f,%.2f' % (theoreticalFirstMeasImprove_u, firstMeasTraceImprovement_u))
+    #print('Unmodeled: Empirical smoothing MSE improvement (all future measurements): %.2f' % (totalSmoothingImprovement_u))
+

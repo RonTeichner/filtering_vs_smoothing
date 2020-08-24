@@ -311,6 +311,20 @@ def simVarEst(f, processNoiseVar, eta, unmodeledParamsDict = {}, enableUnmodeled
     '''
     return np.var(x_err_array), np.var(x_err_s_array), x_err_array, x_err_s_array, meanModeledPower, meanUnmodeledPower
 
+def calcDeltaR(a, q):
+    dim_x = a.shape[0]
+    tildeR = np.zeros((dim_x, dim_x))
+    thr = 1e-10 * np.abs(a).max()
+    maxValAboveThr = True
+    k = 0
+    while maxValAboveThr:
+        a_k = np.linalg.matrix_power(a, k)
+        summed = np.dot(a_k, np.dot(q, np.transpose(a_k)))
+        tildeR = tildeR + summed
+        k+=1
+        if np.abs(summed).max() < thr:
+            break
+    return tildeR
 
 def gen_measurements(F, H, Q, R, P, N):
     dim_x, dim_z = F.shape[0], H.shape[0]
@@ -329,9 +343,41 @@ def gen_measurements(F, H, Q, R, P, N):
 
     return x, z
 
-def simCovEst(F, H, processNoiseVar, measurementNoiseVar, unmodeledNoiseVar):
-    nIter = 10
+def unmodeledBehaviorSim(DeltaFirstSample, unmodeledNoiseVar, unmodeledNormalizedDecrasePerformanceMat, k_filter, N, tilde_z, filterStateInit, filter_P_init, tilde_x, nIter):
+    dim_x = k_filter.F.shape[0]
+
+    x_err_f_u_array, x_err_s_firstMeas_u_array, x_err_s_u_array = np.array([]), np.array([]), np.array([])
+    # add unmodeled behavior:
+    theoreticalFirstMeasImprove_u = np.trace(DeltaFirstSample) - unmodeledNoiseVar * np.trace(unmodeledNormalizedDecrasePerformanceMat)
+    for i in range(nIter):
+        s = np.matmul(k_filter.H, np.expand_dims(np.dot(np.linalg.cholesky(unmodeledNoiseVar * np.eye(dim_x)), np.random.randn(dim_x, N)).transpose(), -1))
+        z = tilde_z + s
+
+        # run filter on unmodeled measurement:
+        k_filter.x = filterStateInit.copy()
+        k_filter.P = filter_P_init.copy()
+        x_est_u, cov_u, x_est_f_u, _ = k_filter.batch_filter(zs=z, update_first=False)
+        x_est_s_u, _, _, _ = k_filter.rts_smoother(x_est_u, cov_u)
+
+        x_err_f_u = np.power(np.linalg.norm(tilde_x - x_est_f_u, axis=1), 2)
+        x_err_f_u_array = np.append(x_err_f_u_array, x_err_f_u[int(np.round(3 / 4 * N)):].squeeze())
+        x_err_s_u = np.power(np.linalg.norm(tilde_x - x_est_s_u, axis=1), 2)
+        x_err_s_u_array = np.append(x_err_s_u_array, x_err_s_u[int(np.round(3 / 8 * N)):int(np.round(5 / 8 * N))].squeeze())
+        x_err_firstMeas_u = np.power(np.linalg.norm(tilde_x - x_est_u, axis=1), 2)
+        x_err_s_firstMeas_u_array = np.append(x_err_s_firstMeas_u_array, x_err_firstMeas_u[int(np.round(3 / 4 * N)):].squeeze())
+
+    traceCovFiltering_u, traceCovSmoothing_u = np.mean(x_err_f_u_array), np.mean(x_err_s_u_array)
+    traceCovFirstMeas_u = np.mean(x_err_s_firstMeas_u_array)
+    firstMeasTraceImprovement_u = traceCovFiltering_u - traceCovFirstMeas_u
+    totalSmoothingImprovement_u = traceCovFiltering_u - traceCovSmoothing_u
+
+    return traceCovFiltering_u, traceCovSmoothing_u, traceCovFirstMeas_u, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u
+
+def simCovEst(F, H, processNoiseVar, measurementNoiseVar):
+
     N = 10000
+    nIterUnmodeled = 5
+    uN = 20
 
     dim_x, dim_z = F.shape[0], H.shape[1]
 
@@ -348,56 +394,57 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar, unmodeledNoiseVar):
     tildeF = k_filter.F - np.dot(steadyKalmanGain, k_filter.H)
     theoreticalSmoothingFilteringDiff = solve_discrete_lyapunov(a=np.dot(theoreticalBarSigma, np.dot(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma))) , q=DeltaFirstSample)
     theoreticalSmoothingSigma = theoreticalBarSigma - theoreticalSmoothingFilteringDiff
+    theoreticalFirstMeasImprove = np.trace(DeltaFirstSample)
 
     KH_t = np.dot(steadyKalmanGain, k_filter.H)
     tildeR = solve_discrete_lyapunov(a=tildeF, q=np.dot(KH_t, np.transpose(KH_t)))
-    # TODO: verify the tildeR == the sum
+    tildeR_directSum = calcDeltaR(a=tildeF, q=np.dot(KH_t, np.transpose(KH_t)))
+    assert np.abs(tildeR_directSum - tildeR).max() < 1e-5
+
     Ka_0H_t = np.dot(Ka_0, k_filter.H)
-    unmodeledNormalizedDecrasePerformanceMat = np.dot(Ka_0H_t, np.dot(tildeR + np.eye(tildeR.shape[0]), np.transpose(Ka_0H_t))) - (np.dot(Ka_0H_t, tildeR) + np.dot(tildeR, np.transpose(Ka_0H_t)))
+    unmodeledNormalizedDecrasePerformanceMat = np.dot(Ka_0H_t, np.dot(tildeR + np.eye(dim_x), np.transpose(Ka_0H_t))) - (np.dot(Ka_0H_t, tildeR) + np.dot(tildeR, np.transpose(Ka_0H_t)))
 
     theoreticalThresholdUnmodeledNoiseVar = np.trace(DeltaFirstSample) / np.trace(unmodeledNormalizedDecrasePerformanceMat)
 
-    x_err_f_array, x_err_s_array = np.array([]), np.array([])
-    for i in range(nIter):
+    if theoreticalThresholdUnmodeledNoiseVar > 0:
+        unmodeledNoiseVarVec = np.logspace(np.log10(1e-2 * theoreticalThresholdUnmodeledNoiseVar), np.log10(10 * theoreticalThresholdUnmodeledNoiseVar), uN, base=10)
+    else:
+        unmodeledNoiseVarVec = np.logspace(np.log10(1e-2 * np.abs(theoreticalThresholdUnmodeledNoiseVar)), np.log10(10 * np.abs(theoreticalThresholdUnmodeledNoiseVar)), uN, base=10)
 
-        filterStateInit = np.dot(np.linalg.cholesky(k_filter.P), np.random.randn(dim_x, 1))
-        k_filter.x = filterStateInit
+    x_err_f_array, x_err_s_array, x_err_s_firstMeas_array = np.array([]), np.array([]), np.array([])
 
-        x, z = gen_measurements(k_filter.F, k_filter.H, k_filter.Q, k_filter.R, k_filter.P, N)
+    filter_P_init = k_filter.P.copy()
+    filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.random.randn(dim_x, 1))
 
-        # run filter:
-        x_est, cov, x_est_f, _ = k_filter.batch_filter(zs=z, update_first=False)
-        x_est_s, _, _, _ = k_filter.rts_smoother(x_est, cov)
-        # x_est[k] has the estimation of x[k] given z[k]. so for compatability with Anderson we should propagate x_est:
-        # x_est[1:] = k_filter.F * x_est[:-1]
-        # x_est_f is compatible with Anderson
-        '''
-        x_est, k_gain, x_err = np.zeros((N, 1, 1)), np.zeros((N, 1, 1)), np.zeros((N, 1, 1))
-        x_est[0] = filterStateInit
-        for k in range(1, N):
-            k_filter.predict()
-            k_filter.update(z[k-1])
-            x_est[k], k_gain[k] = k_filter.x, k_filter.K
-        '''
-        x_err_f = np.power(np.linalg.norm(x - x_est_f, axis=1), 2)
-        x_err_f_array = np.append(x_err_f_array, x_err_f[int(np.round(3 / 4 * N)):].squeeze())
-        x_err_s = np.power(np.linalg.norm(x - x_est_s, axis=1), 2)
-        x_err_s_array = np.append(x_err_s_array, x_err_s[int(np.round(3 / 8 * N)):int(np.round(5 / 8 * N))].squeeze())
-        '''
-        plt.plot(k_gain.squeeze()[1:])
-        plt.title('kalman gain')
-        plt.show()
-        '''
-    '''
-    plt.figure()
-    n_bins = 100
-    n, bins, patches = plt.hist(volt2dbW(np.abs(x_err_array)), n_bins, density=True, histtype='step', cumulative=True, label='hist')
-    plt.xlabel(r'$\sigma_e^2$ [dbW]')
-    plt.title(r'CDF of $\sigma_e^2$; f=%0.1f' % f)
-    plt.grid()
-    plt.show()
-    '''
-    return np.mean(x_err_f_array), np.mean(x_err_s_array), np.trace(theoreticalBarSigma), np.trace(theoreticalSmoothingSigma), theoreticalThresholdUnmodeledNoiseVar
+    tilde_x, tilde_z = gen_measurements(k_filter.F, k_filter.H, k_filter.Q, k_filter.R, k_filter.P, N)
+
+    # run filter on modeled measurement:
+    k_filter.x = filterStateInit.copy()
+    k_filter.P = filter_P_init.copy()
+    x_est, cov, x_est_f, _ = k_filter.batch_filter(zs=tilde_z, update_first=False)
+    x_est_s, _, _, _ = k_filter.rts_smoother(x_est, cov)
+    # x_est[k] has the estimation of x[k] given z[k]. so for compatability with Anderson we should propagate x_est:
+    # x_est[1:] = k_filter.F * x_est[:-1]
+    # x_est_f is compatible with Anderson
+
+    x_err_f = np.power(np.linalg.norm(tilde_x - x_est_f, axis=1), 2)
+    x_err_f_array = np.append(x_err_f_array, x_err_f[int(np.round(3 / 4 * N)):].squeeze())
+    x_err_s = np.power(np.linalg.norm(tilde_x - x_est_s, axis=1), 2)
+    x_err_s_array = np.append(x_err_s_array, x_err_s[int(np.round(3 / 8 * N)):int(np.round(5 / 8 * N))].squeeze())
+    x_err_firstMeas = np.power(np.linalg.norm(tilde_x - x_est, axis=1), 2)
+    x_err_s_firstMeas_array = np.append(x_err_s_firstMeas_array, x_err_firstMeas[int(np.round(3 / 4 * N)):].squeeze())
+
+    traceCovFiltering, traceCovSmoothing = np.mean(x_err_f_array), np.mean(x_err_s_array)
+    theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing = np.trace(theoreticalBarSigma), np.trace(theoreticalSmoothingSigma)
+    traceCovFirstMeas = np.mean(x_err_s_firstMeas_array)
+    firstMeasTraceImprovement = traceCovFiltering - traceCovFirstMeas
+
+    uN = unmodeledNoiseVarVec.shape[0]
+    traceCovFiltering_u, traceCovSmoothing_u, traceCovFirstMeas_u, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u = np.zeros(uN), np.zeros(uN), np.zeros(uN), np.zeros(uN), np.zeros(uN), np.zeros(uN)
+    for uIdx, unmodeledNoiseVar in enumerate(unmodeledNoiseVarVec):
+        traceCovFiltering_u[uIdx], traceCovSmoothing_u[uIdx], traceCovFirstMeas_u[uIdx], firstMeasTraceImprovement_u[uIdx], theoreticalFirstMeasImprove_u[uIdx], totalSmoothingImprovement_u[uIdx] = unmodeledBehaviorSim(DeltaFirstSample, unmodeledNoiseVar, unmodeledNormalizedDecrasePerformanceMat, k_filter, N, tilde_z, filterStateInit, filter_P_init, tilde_x, nIterUnmodeled)
+
+    return traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar, unmodeledNoiseVarVec, firstMeasTraceImprovement, theoreticalFirstMeasImprove, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u
 
 def dbm2var(x_dbm):
     return np.power(10, np.divide(x_dbm - 30, 10))
