@@ -269,8 +269,8 @@ if enableUnmodeledBehaviourSim:
     plt.show()
 
 if enableUnmodeledBehaviourHighDimSim:
-    #np.random.seed(11) # gives unmodeled noise thr of 6.44
-    np.random.seed(10)  # gives unmodeled noise thr of -29.08
+    np.random.seed(11) # gives unmodeled noise thr of 6.44
+    #np.random.seed(10)  # gives unmodeled noise thr of -29.08
 
     xdim, zdim = 5, 3
     # draw F with max eigenvalue of 1
