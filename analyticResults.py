@@ -269,14 +269,14 @@ if enableUnmodeledBehaviourSim:
     plt.show()
 
 if enableUnmodeledBehaviourHighDimSim:
-    np.random.seed(11) # gives unmodeled noise thr of 6.44
-    #np.random.seed(10)  # gives unmodeled noise thr of -29.08
+    np.random.seed(11) # gives unmodeled noise thr of 4.57
+    #np.random.seed(9)  # gives unmodeled noise thr of -57.54
 
     xdim, zdim = 5, 3
     # draw F with max eigenvalue of 1
     F = np.random.randn(xdim, xdim)
     eigAbsMax = np.abs(np.linalg.eigvals(F)).max()
-    F = F/eigAbsMax
+    F = F/(1.1*eigAbsMax)
 
     H = np.random.randn(xdim, zdim)
     H = H/np.linalg.norm(H)
