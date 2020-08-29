@@ -373,11 +373,14 @@ def unmodeledBehaviorSim(DeltaFirstSample, unmodeledNoiseVar, unmodeledNormalize
 
     return traceCovFiltering_u, traceCovSmoothing_u, traceCovFirstMeas_u, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u
 
-def simCovEst(F, H, processNoiseVar, measurementNoiseVar):
+def simCovEst(F, H, processNoiseVar, measurementNoiseVar, enableTheoreticalResultsOnly):
 
     N = 10000
     nIterUnmodeled = 20
     uN = 30
+
+    if enableTheoreticalResultsOnly:
+        nIterUnmodeled = 1
 
     dim_x, dim_z = F.shape[0], H.shape[1]
 
@@ -416,23 +419,26 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar):
     filter_P_init = k_filter.P.copy()
     filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.random.randn(dim_x, 1))
 
-    tilde_x, tilde_z = gen_measurements(k_filter.F, k_filter.H, k_filter.Q, k_filter.R, k_filter.P, N)
+    if not enableTheoreticalResultsOnly:
+        tilde_x, tilde_z = gen_measurements(k_filter.F, k_filter.H, k_filter.Q, k_filter.R, k_filter.P, N)
 
-    # run filter on modeled measurement:
-    k_filter.x = filterStateInit.copy()
-    k_filter.P = filter_P_init.copy()
-    x_est, cov, x_est_f, _ = k_filter.batch_filter(zs=tilde_z, update_first=False)
-    x_est_s, _, _, _ = k_filter.rts_smoother(x_est, cov)
-    # x_est[k] has the estimation of x[k] given z[k]. so for compatability with Anderson we should propagate x_est:
-    # x_est[1:] = k_filter.F * x_est[:-1]
-    # x_est_f is compatible with Anderson
+        # run filter on modeled measurement:
+        k_filter.x = filterStateInit.copy()
+        k_filter.P = filter_P_init.copy()
+        x_est, cov, x_est_f, _ = k_filter.batch_filter(zs=tilde_z, update_first=False)
+        x_est_s, _, _, _ = k_filter.rts_smoother(x_est, cov)
+        # x_est[k] has the estimation of x[k] given z[k]. so for compatability with Anderson we should propagate x_est:
+        # x_est[1:] = k_filter.F * x_est[:-1]
+        # x_est_f is compatible with Anderson
 
-    x_err_f = np.power(np.linalg.norm(tilde_x - x_est_f, axis=1), 2)
-    x_err_f_array = np.append(x_err_f_array, x_err_f[int(np.round(3 / 4 * N)):].squeeze())
-    x_err_s = np.power(np.linalg.norm(tilde_x - x_est_s, axis=1), 2)
-    x_err_s_array = np.append(x_err_s_array, x_err_s[int(np.round(3 / 8 * N)):int(np.round(5 / 8 * N))].squeeze())
-    x_err_firstMeas = np.power(np.linalg.norm(tilde_x - x_est, axis=1), 2)
-    x_err_s_firstMeas_array = np.append(x_err_s_firstMeas_array, x_err_firstMeas[int(np.round(3 / 4 * N)):].squeeze())
+        x_err_f = np.power(np.linalg.norm(tilde_x - x_est_f, axis=1), 2)
+        x_err_f_array = np.append(x_err_f_array, x_err_f[int(np.round(3 / 4 * N)):].squeeze())
+        x_err_s = np.power(np.linalg.norm(tilde_x - x_est_s, axis=1), 2)
+        x_err_s_array = np.append(x_err_s_array, x_err_s[int(np.round(3 / 8 * N)):int(np.round(5 / 8 * N))].squeeze())
+        x_err_firstMeas = np.power(np.linalg.norm(tilde_x - x_est, axis=1), 2)
+        x_err_s_firstMeas_array = np.append(x_err_s_firstMeas_array, x_err_firstMeas[int(np.round(3 / 4 * N)):].squeeze())
+    else:
+        tilde_x, tilde_z = 0, 0
 
     traceCovFiltering, traceCovSmoothing = np.mean(x_err_f_array), np.mean(x_err_s_array)
     theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing = np.trace(theoreticalBarSigma), np.trace(theoreticalSmoothingSigma)
@@ -441,9 +447,9 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar):
 
     uN = unmodeledNoiseVarVec.shape[0]
     traceCovFiltering_u, traceCovSmoothing_u, traceCovFirstMeas_u, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u = np.zeros(uN), np.zeros(uN), np.zeros(uN), np.zeros(uN), np.zeros(uN), np.zeros(uN)
-    for uIdx, unmodeledNoiseVar in enumerate(unmodeledNoiseVarVec):
-        traceCovFiltering_u[uIdx], traceCovSmoothing_u[uIdx], traceCovFirstMeas_u[uIdx], firstMeasTraceImprovement_u[uIdx], theoreticalFirstMeasImprove_u[uIdx], totalSmoothingImprovement_u[uIdx] = unmodeledBehaviorSim(DeltaFirstSample, unmodeledNoiseVar, unmodeledNormalizedDecrasePerformanceMat, k_filter, N, tilde_z, filterStateInit, filter_P_init, tilde_x, nIterUnmodeled)
-        print(f'finished unmodeled var no. {uIdx} out of {unmodeledNoiseVarVec.shape[0]}')
+    #for uIdx, unmodeledNoiseVar in enumerate(unmodeledNoiseVarVec):
+    #    traceCovFiltering_u[uIdx], traceCovSmoothing_u[uIdx], traceCovFirstMeas_u[uIdx], firstMeasTraceImprovement_u[uIdx], theoreticalFirstMeasImprove_u[uIdx], totalSmoothingImprovement_u[uIdx] = unmodeledBehaviorSim(DeltaFirstSample, unmodeledNoiseVar, unmodeledNormalizedDecrasePerformanceMat, k_filter, N, tilde_z, filterStateInit, filter_P_init, tilde_x, nIterUnmodeled)
+    #    print(f'finished unmodeled var no. {uIdx} out of {unmodeledNoiseVarVec.shape[0]}')
 
     return traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar, unmodeledNoiseVarVec, firstMeasTraceImprovement, theoreticalFirstMeasImprove, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u
 
