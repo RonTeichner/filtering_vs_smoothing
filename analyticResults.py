@@ -274,10 +274,12 @@ if enableUnmodeledBehaviourHighDimSim:
     #np.random.seed(9)  # gives unmodeled noise thr of -57.54
 
     xdim, zdim = 5, 3
-    # draw F with max eigenvalue of 1
-    F = np.random.randn(xdim, xdim)
-    eigAbsMax = np.abs(np.linalg.eigvals(F)).max()
-    F = F/(1.1*eigAbsMax)
+    if xdim == 1:
+        F = -1 + 2 * np.random.rand(xdim, xdim)
+    else:
+        F = np.random.randn(xdim, xdim)
+        eigAbsMax = np.abs(np.linalg.eigvals(F)).max()
+        F = F / (1.1 * eigAbsMax)
 
     H = np.random.randn(xdim, zdim)
     H = H/np.linalg.norm(H)
@@ -326,9 +328,12 @@ if enableUnmodeledBehaviourHighDimSim_theoreticalOnly:
         xdim, zdim = 1, 1
         #xdim, zdim = 5, 3
         # draw F with max eigenvalue of 1
-        F = np.random.randn(xdim, xdim)
-        eigAbsMax = np.abs(np.linalg.eigvals(F)).max()
-        F = F/(1.1*eigAbsMax)
+        if xdim == 1:
+            F = -1 + 2*np.random.rand(xdim, xdim)
+        else:
+            F = np.random.randn(xdim, xdim)
+            eigAbsMax = np.abs(np.linalg.eigvals(F)).max()
+            F = F/(1.1*eigAbsMax)
 
         H = np.random.randn(xdim, zdim)
         H = H/np.linalg.norm(H)
