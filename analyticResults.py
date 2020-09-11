@@ -279,7 +279,7 @@ if enableUnmodeledBehaviourHighDimSim:
     else:
         F = np.random.randn(xdim, xdim)
         eigAbsMax = np.abs(np.linalg.eigvals(F)).max()
-        F = F / (1.1 * eigAbsMax)
+        F = F/((1.1+0.1*np.random.rand(1))*eigAbsMax)
 
     H = np.random.randn(xdim, zdim)
     H = H/np.linalg.norm(H)
@@ -320,20 +320,21 @@ if enableUnmodeledBehaviourHighDimSim:
 if enableUnmodeledBehaviourHighDimSim_theoreticalOnly:
     objectiveNotMet = True
     iterCounter = 0
+    F_list, thr_list, measNoiseVarList = list(), list(), list()
     while objectiveNotMet:
         iterCounter += 1
         if not np.mod(iterCounter, 100):
             print(f'iterCounter = {iterCounter}')
 
-        xdim, zdim = 1, 1
-        #xdim, zdim = 5, 3
+        #xdim, zdim = 2, 1
+        xdim, zdim = 5, 3
         # draw F with max eigenvalue of 1
         if xdim == 1:
             F = -1 + 2*np.random.rand(xdim, xdim)
         else:
             F = np.random.randn(xdim, xdim)
             eigAbsMax = np.abs(np.linalg.eigvals(F)).max()
-            F = F/(1.1*eigAbsMax)
+            F = F/((1.1+0.1*np.random.rand(1))*eigAbsMax)
 
         H = np.random.randn(xdim, zdim)
         H = H/np.linalg.norm(H)
@@ -344,11 +345,35 @@ if enableUnmodeledBehaviourHighDimSim_theoreticalOnly:
             measurementNoiseVar = processNoiseVar + 100*np.random.rand()
         else:
             measurementNoiseVar = np.random.rand()
+        measurementNoiseVar = 1
+        measNoiseVarList.append(measurementNoiseVar)
 
         traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar, unmodeledNoiseVarVec, firstMeasTraceImprovement, theoreticalFirstMeasImprove, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u = simCovEst(F, H, processNoiseVar, measurementNoiseVar, True)
-        if theoreticalThresholdUnmodeledNoiseVar < 0:
+        #if theoreticalThresholdUnmodeledNoiseVar < 0:
+        #    objectiveNotMet = False
+        #    print(f'iterCounter = {iterCounter}')
+
+        F_list.append(F)
+        thr_list.append(theoreticalThresholdUnmodeledNoiseVar)
+
+        if iterCounter == 10000:
             objectiveNotMet = False
-            print(f'iterCounter = {iterCounter}')
+
+    plt.figure()
+    plt.scatter(np.linalg.det(np.asarray(F_list)), thr_list)
+
+
+    plt.figure()
+    plt.scatter(np.linalg.eigvals(np.asarray(F_list)).sum(axis=1), thr_list)
+
+    plt.figure()
+    n_bins = 1000
+    positiveIndexes = np.where(np.asarray(thr_list) > 0)
+    n, bins, patches = plt.hist(watt2db(np.asarray(thr_list)[positiveIndexes]) - watt2db(np.asarray(measNoiseVarList)[positiveIndexes]), n_bins, density=True, histtype='step', cumulative=True, label=r'$\frac{\bar{\sigma}_u^2}{\sigma_v^2}$')
+    plt.title(r'CDF plot of $\bar{\sigma}_u^2 / \sigma_v^2$ [db] for $\operatorname{trace}\{\Delta^{U:j}_{j-1,j}\} > 0$')
+    plt.xlabel(r'$\bar{\sigma}_u^2 / \sigma_v^2$ [db]')
+    plt.grid(True)
+    plt.show()
 
 
     print('Modeled: Theoretical MSE filtering: %.2f' % (theoreticalTraceCovFiltering))
@@ -358,6 +383,8 @@ if enableUnmodeledBehaviourHighDimSim_theoreticalOnly:
     print('Modeled: Theoretical smoothing MSE improvement (all future measurements): %.2f' % (theoreticalTraceCovFiltering - theoreticalTraceCovSmoothing))
 
     print('Theoretical maximal unmodeled noise var: %.2f' % (theoreticalThresholdUnmodeledNoiseVar))
+    print(f'eig(F) = {np.linalg.eigvals(F)}')
+    print(f'det(F) = {np.linalg.det(F)}')
     if theoreticalThresholdUnmodeledNoiseVar > 0:
         unmodeledNoiseVarVec_db = watt2db(unmodeledNoiseVarVec / theoreticalThresholdUnmodeledNoiseVar)
     else:
