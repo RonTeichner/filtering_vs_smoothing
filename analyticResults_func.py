@@ -447,9 +447,9 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar, enableTheoreticalResul
 
     uN = unmodeledNoiseVarVec.shape[0]
     traceCovFiltering_u, traceCovSmoothing_u, traceCovFirstMeas_u, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u = np.zeros(uN), np.zeros(uN), np.zeros(uN), np.zeros(uN), np.zeros(uN), np.zeros(uN)
-    #for uIdx, unmodeledNoiseVar in enumerate(unmodeledNoiseVarVec):
-    #    traceCovFiltering_u[uIdx], traceCovSmoothing_u[uIdx], traceCovFirstMeas_u[uIdx], firstMeasTraceImprovement_u[uIdx], theoreticalFirstMeasImprove_u[uIdx], totalSmoothingImprovement_u[uIdx] = unmodeledBehaviorSim(DeltaFirstSample, unmodeledNoiseVar, unmodeledNormalizedDecrasePerformanceMat, k_filter, N, tilde_z, filterStateInit, filter_P_init, tilde_x, nIterUnmodeled)
-    #    print(f'finished unmodeled var no. {uIdx} out of {unmodeledNoiseVarVec.shape[0]}')
+    for uIdx, unmodeledNoiseVar in enumerate(unmodeledNoiseVarVec):
+        traceCovFiltering_u[uIdx], traceCovSmoothing_u[uIdx], traceCovFirstMeas_u[uIdx], firstMeasTraceImprovement_u[uIdx], theoreticalFirstMeasImprove_u[uIdx], totalSmoothingImprovement_u[uIdx] = unmodeledBehaviorSim(DeltaFirstSample, unmodeledNoiseVar, unmodeledNormalizedDecrasePerformanceMat, k_filter, N, tilde_z, filterStateInit, filter_P_init, tilde_x, nIterUnmodeled)
+        print(f'finished unmodeled var no. {uIdx} out of {unmodeledNoiseVarVec.shape[0]}')
 
     return traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar, unmodeledNoiseVarVec, firstMeasTraceImprovement, theoreticalFirstMeasImprove, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u
 
