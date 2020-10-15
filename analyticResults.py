@@ -273,6 +273,8 @@ if enableUnmodeledBehaviourHighDimSim:
     np.random.seed(11) # gives unmodeled noise thr of 4.57
     #np.random.seed(9)  # gives unmodeled noise thr of -57.54
 
+    enableDirectVsRecursiveSmoothingDiffCheck = True
+
     xdim, zdim = 5, 3
     if xdim == 1:
         F = -1 + 2 * np.random.rand(xdim, xdim)
@@ -286,7 +288,7 @@ if enableUnmodeledBehaviourHighDimSim:
 
     processNoiseVar, measurementNoiseVar = 1, 1
 
-    traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar, unmodeledNoiseVarVec, firstMeasTraceImprovement, theoreticalFirstMeasImprove, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u = simCovEst(F, H, processNoiseVar, measurementNoiseVar, False)
+    traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar, unmodeledNoiseVarVec, firstMeasTraceImprovement, theoreticalFirstMeasImprove, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u = simCovEst(F, H, processNoiseVar, measurementNoiseVar, False, enableDirectVsRecursiveSmoothingDiffCheck)
 
     print('Modeled: Theoretical, empirical MSE filtering: %.2f,%.2f' %(theoreticalTraceCovFiltering, traceCovFiltering))
     print('Modeled: Theoretical, empirical MSE smoothing: %.2f,%.2f' % (theoreticalTraceCovSmoothing, traceCovSmoothing))
@@ -348,7 +350,7 @@ if enableUnmodeledBehaviourHighDimSim_theoreticalOnly:
         measurementNoiseVar = 1
         measNoiseVarList.append(measurementNoiseVar)
 
-        traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar, unmodeledNoiseVarVec, firstMeasTraceImprovement, theoreticalFirstMeasImprove, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u = simCovEst(F, H, processNoiseVar, measurementNoiseVar, True)
+        traceCovFiltering, traceCovSmoothing, theoreticalTraceCovFiltering, theoreticalTraceCovSmoothing, theoreticalThresholdUnmodeledNoiseVar, unmodeledNoiseVarVec, firstMeasTraceImprovement, theoreticalFirstMeasImprove, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u = simCovEst(F, H, processNoiseVar, measurementNoiseVar, True, False)
         #if theoreticalThresholdUnmodeledNoiseVar < 0:
         #    objectiveNotMet = False
         #    print(f'iterCounter = {iterCounter}')

@@ -373,7 +373,102 @@ def unmodeledBehaviorSim(DeltaFirstSample, unmodeledNoiseVar, unmodeledNormalize
 
     return traceCovFiltering_u, traceCovSmoothing_u, traceCovFirstMeas_u, firstMeasTraceImprovement_u, theoreticalFirstMeasImprove_u, totalSmoothingImprovement_u
 
-def simCovEst(F, H, processNoiseVar, measurementNoiseVar, enableTheoreticalResultsOnly):
+def calc_tildeE(tildeF, D_int, k, i, n):
+    tildeF_pow_n_minus_k = np.linalg.matrix_power(tildeF, n - k)
+    tildeF_pow_n_minus_i_minus_1 = np.linalg.matrix_power(tildeF, n - i - 1)
+    tildeE = np.matmul(tildeF_pow_n_minus_k.transpose(), np.matmul(D_int, tildeF_pow_n_minus_i_minus_1))
+
+    return tildeE
+
+def calc_tildeD(tildeF, D_int, k, i, m):
+    if m > 0:
+        tildeD_0 = calc_tildeD(k, i, 0)
+    else:
+        m = np.inf
+
+    thr = 1e-10 * np.abs(tildeF).max()
+    E_summand_cumsum_m_minus_1 = 0
+    for n in range(m):
+        tmp = calc_tildeE(tildeF, D_int, k, i, n)
+        E_summand_cumsum_m_minus_1 = E_summand_cumsum_m_minus_1 + tmp
+        if np.abs(tmp).max() < thr:
+            break
+
+    tildeD = tildeD_0 - E_summand_cumsum_m_minus_1
+
+    return tildeD
+
+def calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i):
+    tildeF_pow_k_minus_i_minus_1 = np.linalg.matrix_power(tildeF, k - i - 1)
+    tildeB = tildeF_pow_k_minus_i_minus_1 - np.matmul(theoreticalBarSigma, calc_tildeD(tildeF, D_int, k, i, k))
+    return tildeB
+
+def calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i):
+    tildeF_pow_i_minus_k = np.linalg.matrix_power(tildeF, i - k)
+    tildeC = np.matmul(theoreticalBarSigma, np.matmul(tildeF_pow_i_minus_k.transpose(), inv_F_Sigma) - calc_tildeD(tildeF, D_int, k, i, i+1))
+
+    return tildeC
+
+def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson's notations
+    # time index k is from 0 to z.shape[0]
+    N = z.shape[0]
+    inv_F_Sigma = np.linalg.inv(np.matmul(F, theoreticalBarSigma))
+    K_HT = np.matmul(K, H.transpose())
+    D_int = np.matmul(inv_F_Sigma, K_HT)
+    inv_tildeF = np.linalg.inv(tildeF)
+
+    x_dim = tildeF.shape[0]
+    '''
+    # calc tildeE[k, i, n] is a (x_dim x x_dim) matrix
+    tildeE = np.zeros((N, N, 10*N, x_dim, x_dim))
+    thr = 1e-10 * np.abs(tildeF).max()
+    for n in range(tildeE.shape[2]):
+        maxVal = 0
+        for k in range(tildeE.shape[0]):
+            tildeF_pow_n_minus_k = np.linalg.matrix_power(tildeF, n - k)
+            for i in range(tildeE.shape[1]):
+                tildeF_pow_n_minus_i_minus_1 = np.linalg.matrix_power(tildeF, n - i - 1)
+                tildeE[k, i, n] = np.matmul(tildeF_pow_n_minus_k.transpose(), np.matmul(D_int, tildeF_pow_n_minus_i_minus_1))
+                maxVal = max(maxVal, np.abs(tildeE[k, i, n]).max())
+        if maxVal < thr:
+            tildeE = tildeE[:, :, :n+1]
+            break
+    
+    # calc tildeD[k, i, m] is a (x_dim x x_dim) matrix
+    tildeD = np.zeros((N, N, N+1, x_dim, x_dim))
+    for k in range(tildeD.shape[0]):
+        for i in range(tildeD.shape[1]):
+            tildeE_fixed_k_fixed_i = tildeE[k, i]
+            E_summand_cumsum = np.cumsum(tildeE_fixed_k_fixed_i, axis=0)
+            tildeD[k, i, 0] = E_summand_cumsum[-1]
+            for m in range(1, min(tildeD.shape[2], E_summand_cumsum.shape[0] + 1)):
+                tildeD[k, i, m] = tildeD[k, i, 0] - E_summand_cumsum[m - 1]
+    
+    # calc tildeB[k, i], tildeC[k, i] are a (x_dim x x_dim) matrix
+    tildeB, tildeC = np.zeros((N, N, x_dim, x_dim)), np.zeros((N, N, x_dim, x_dim))
+    for k in range(tildeB.shape[0]):
+        for i in range(tildeB.shape[1]):
+            tildeF_pow_k_minus_i_minus_1 = np.linalg.matrix_power(tildeF, k - i - 1)
+            tildeF_pow_i_minus_k = np.linalg.matrix_power(tildeF, i - k)
+            tildeB[k, i] = tildeF_pow_k_minus_i_minus_1 - np.matmul(theoreticalBarSigma, tildeD[k, i, k])
+            tildeC[k, i] = np.matmul(theoreticalBarSigma, np.matmul(tildeF_pow_i_minus_k.transpose(), inv_F_Sigma) - tildeD[k, i, i+1])
+    '''
+    y = np.matmul(K, z)
+
+    x_est_s_direct_calc = np.zeros((N, x_dim, 1))
+    for k in range(N):
+        # past measurements:
+        past, future = np.zeros((x_dim, 1)), np.zeros((x_dim, 1))
+        for i in range(k):
+            past = past + np.matmul(tildeB[k, i], y[i])
+        for i in range(k, N):
+            future = future + np.matmul(tildeC[k, i], y[i])
+
+        x_est_s_direct_calc[k] = past + future
+
+    return x_est_s_direct_calc
+
+def simCovEst(F, H, processNoiseVar, measurementNoiseVar, enableTheoreticalResultsOnly, enableDirectVsRecursiveSmoothingDiffCheck):
 
     N = 10000
     nIterUnmodeled = 20
@@ -430,6 +525,18 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar, enableTheoreticalResul
         # x_est[k] has the estimation of x[k] given z[k]. so for compatability with Anderson we should propagate x_est:
         # x_est[1:] = k_filter.F * x_est[:-1]
         # x_est_f is compatible with Anderson
+
+        if enableDirectVsRecursiveSmoothingDiffCheck:
+            # compare smoothing estimation to a direct (not recursive) calculation
+            x_est_s_direct_calc = direct_calc_smoothing(tilde_z, steadyKalmanGain, k_filter.H.transpose(), tildeF, k_filter.F, theoreticalBarSigma)
+
+            smoothing_recursive_direct_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_s_direct_calc - x_est_s, axis=1), 2), np.power(np.linalg.norm(x_est_s, axis=1), 2)))
+            plt.figure()
+            plt.plot(smoothing_recursive_direct_diff_energy)
+            plt.title(r'direct vs recursive diff')
+            plt.ylabel('db')
+            plt.grid()
+            plt.show()
 
         x_err_f = np.power(np.linalg.norm(tilde_x - x_est_f, axis=1), 2)
         x_err_f_array = np.append(x_err_f_array, x_err_f[int(np.round(3 / 4 * N)):].squeeze())
