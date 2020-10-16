@@ -382,9 +382,11 @@ def calc_tildeE(tildeF, D_int, k, i, n):
 
 def calc_tildeD(tildeF, D_int, k, i, m):
     if m > 0:
-        tildeD_0 = calc_tildeD(k, i, 0)
+        tildeD_0 = calc_tildeD(tildeF, D_int, k, i, 0)
+        mEqualZero = False
     else:
-        m = np.inf
+        m = 1000000
+        mEqualZero = True
 
     thr = 1e-10 * np.abs(tildeF).max()
     E_summand_cumsum_m_minus_1 = 0
@@ -393,8 +395,10 @@ def calc_tildeD(tildeF, D_int, k, i, m):
         E_summand_cumsum_m_minus_1 = E_summand_cumsum_m_minus_1 + tmp
         if np.abs(tmp).max() < thr:
             break
-
-    tildeD = tildeD_0 - E_summand_cumsum_m_minus_1
+    if mEqualZero:
+        tildeD = E_summand_cumsum_m_minus_1
+    else:
+        tildeD = tildeD_0 - E_summand_cumsum_m_minus_1
 
     return tildeD
 
@@ -460,9 +464,11 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
         # past measurements:
         past, future = np.zeros((x_dim, 1)), np.zeros((x_dim, 1))
         for i in range(k):
-            past = past + np.matmul(tildeB[k, i], y[i])
+            print(f'direct smoothing calc of time {k} out of {N}: processing past measurement {i} out of {k}')
+            past = past + np.matmul(calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i), y[i])
         for i in range(k, N):
-            future = future + np.matmul(tildeC[k, i], y[i])
+            print(f'direct smoothing calc of time {k} out of {N}: processing future measurement {i} out of {N}')
+            future = future + np.matmul(calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i), y[i])
 
         x_est_s_direct_calc[k] = past + future
 
