@@ -381,26 +381,19 @@ def calc_tildeE(tildeF, D_int, k, i, n):
     return tildeE
 
 def calc_tildeD(tildeF, D_int, k, i, m):
-    if m > 0:
-        tildeD_0 = calc_tildeD(tildeF, D_int, k, i, 0)
-        mEqualZero = False
-    else:
-        m = 1000000
-        mEqualZero = True
-
+    dim_x = tildeF.shape[0]
     thr = 1e-10 * np.abs(tildeF).max()
-    E_summand_cumsum_m_minus_1 = 0
-    for n in range(m):
+    maxVal = np.inf
+    E_summed_m_to_inf = np.zeros((dim_x, dim_x))
+    n = m-1
+    while maxVal > thr:
+        n += 1
         tmp = calc_tildeE(tildeF, D_int, k, i, n)
-        E_summand_cumsum_m_minus_1 = E_summand_cumsum_m_minus_1 + tmp
+        E_summed_m_to_inf = E_summed_m_to_inf + tmp
         if np.abs(tmp).max() < thr:
             break
-    if mEqualZero:
-        tildeD = E_summand_cumsum_m_minus_1
-    else:
-        tildeD = tildeD_0 - E_summand_cumsum_m_minus_1
 
-    return tildeD
+    return E_summed_m_to_inf
 
 def calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i):
     tildeF_pow_k_minus_i_minus_1 = np.linalg.matrix_power(tildeF, k - i - 1)
@@ -461,14 +454,19 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
 
     x_est_s_direct_calc = np.zeros((N, x_dim, 1))
     for k in range(N):
+        print(f'direct smoothing calc of time {k} out of {N}')
         # past measurements:
         past, future = np.zeros((x_dim, 1)), np.zeros((x_dim, 1))
         for i in range(k):
-            print(f'direct smoothing calc of time {k} out of {N}: processing past measurement {i} out of {k}')
-            past = past + np.matmul(calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i), y[i])
+            #if not(np.mod(i,100)): print(f'direct smoothing calc of time {k} out of {N}: processing past measurement {i} out of {k}')
+            tildeB = calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i)
+            assert not(np.isnan(tildeB).any()), "tildeB is nan"
+            past = past + np.matmul(tildeB, y[i])
         for i in range(k, N):
-            print(f'direct smoothing calc of time {k} out of {N}: processing future measurement {i} out of {N}')
-            future = future + np.matmul(calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i), y[i])
+            #if not(np.mod(i,100)): print(f'direct smoothing calc of time {k} out of {N}: processing future measurement {i} out of {N}')
+            tildeC = calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i)
+            assert not (np.isnan(tildeC).any()), "tildeC is nan"
+            future = future + np.matmul(tildeC, y[i])
 
         x_est_s_direct_calc[k] = past + future
 
