@@ -380,13 +380,15 @@ def calc_tildeE(tildeF, D_int, k, i, n):
 
     return tildeE
 
-def calc_tildeD(tildeF, D_int, k, i, m):
+def calc_tildeD(tildeF, D_int, k, i, m, N):
     dim_x = tildeF.shape[0]
     thr = 1e-20 * np.abs(tildeF).max()
     E_summed_m_to_inf = np.zeros((dim_x, dim_x))
     n = m-1
     while True:
         n += 1
+        if n > N-1:
+            break
         tmp = calc_tildeE(tildeF, D_int, k, i, n)
         E_summed_m_to_inf = E_summed_m_to_inf + tmp
         if np.abs(tmp).max() < thr:
@@ -394,14 +396,14 @@ def calc_tildeD(tildeF, D_int, k, i, m):
 
     return E_summed_m_to_inf
 
-def calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i):
+def calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i, N):
     tildeF_pow_k_minus_i_minus_1 = np.linalg.matrix_power(tildeF, k - i - 1)
-    tildeB = tildeF_pow_k_minus_i_minus_1 - np.matmul(theoreticalBarSigma, calc_tildeD(tildeF, D_int, k, i, k))
+    tildeB = tildeF_pow_k_minus_i_minus_1 - np.matmul(theoreticalBarSigma, calc_tildeD(tildeF, D_int, k, i, k, N))
     return tildeB
 
-def calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i):
+def calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i, N):
     tildeF_pow_i_minus_k = np.linalg.matrix_power(tildeF, i - k)
-    tildeC = np.matmul(theoreticalBarSigma, np.matmul(tildeF_pow_i_minus_k.transpose(), inv_F_Sigma) - calc_tildeD(tildeF, D_int, k, i, i+1))
+    tildeC = np.matmul(theoreticalBarSigma, np.matmul(tildeF_pow_i_minus_k.transpose(), inv_F_Sigma) - calc_tildeD(tildeF, D_int, k, i, i+1, N))
 
     return tildeC
 
@@ -417,13 +419,14 @@ def recursive_calc_smoothing_anderson(z, K, H, tildeF, F, theoreticalBarSigma): 
     z_dim = z.shape[1]
 
     # filtering, inovations:
-    hat_x_k_plus_1_given_k = np.zeros((N, x_dim, 1))# hat_x_k_plus_1_given_k is in index [k]
+    hat_x_k_plus_1_given_k = np.zeros((N, x_dim, 1))# hat_x_k_plus_1_given_k is in index [k+1]
     bar_z_k = np.zeros((N, z_dim, 1))
     hat_x_k_plus_1_given_k[0] = np.dot(K, z[0])
     bar_z_k[0] = z[0]
-    for k in range(1, N):
-        hat_x_k_plus_1_given_k[k] = np.dot(tildeF, hat_x_k_plus_1_given_k[k-1]) + np.dot(K, z[k])
-        bar_z_k[k] = z[k] - np.dot(H.transpose(), hat_x_k_plus_1_given_k[k-1])
+    for k in range(N-1):
+        hat_x_k_plus_1_given_k[k+1] = np.dot(tildeF, hat_x_k_plus_1_given_k[k]) + np.dot(K, z[k])
+    for k in range(N):
+        bar_z_k[k] = z[k] - np.dot(H.transpose(), hat_x_k_plus_1_given_k[k])
 
     # smoothing:
     hat_x_k_given_N = np.zeros((N, x_dim, 1))
@@ -431,19 +434,32 @@ def recursive_calc_smoothing_anderson(z, K, H, tildeF, F, theoreticalBarSigma): 
     thr = 1e-20 * np.abs(tildeF).max()
     for k in range(N):
         for i in range(k, N):
-            Ka = np.matmul(theoreticalBarSigma, np.matmul(np.linalg.matrix_power(tildeF, i-k).transpose(), Sint))
+            Ka_i_minus_k = np.matmul(theoreticalBarSigma, np.matmul(np.linalg.matrix_power(tildeF, i-k).transpose(), Sint))
             if i > k:
-                hat_x_k_given_i = hat_x_k_given_i + np.dot(Ka, bar_z_k[i])
+                hat_x_k_given_i = hat_x_k_given_i + np.dot(Ka_i_minus_k, bar_z_k[i])
             else:
-                if k > 0:
-                    hat_x_k_given_i = hat_x_k_plus_1_given_k[k-1] + np.dot(Ka, bar_z_k[i])
-                else:
-                    hat_x_k_given_i = np.dot(Ka, bar_z_k[i])
-            if np.abs(Ka).max() < thr:
+                hat_x_k_given_i = hat_x_k_plus_1_given_k[k] + np.dot(Ka_i_minus_k, bar_z_k[i])
+
+            if np.abs(Ka_i_minus_k).max() < thr:
                 break
         hat_x_k_given_N[k] = hat_x_k_given_i
 
-    return hat_x_k_given_N
+    return hat_x_k_plus_1_given_k, hat_x_k_given_N
+
+def direct_calc_filtering(z, K, tildeF):  # Anderson's notations
+    # time index k is from 0 to z.shape[0]
+    N = z.shape[0]
+    x_dim = tildeF.shape[0]
+    thr = 1e-20 * np.abs(tildeF).max()
+    x_est_f_direct_calc = np.zeros((N, x_dim, 1))  # x_est_f_direct_calc[k] has the estimation of x[k] given z[k-1]
+    for k in range(N-1):
+        for i in range(k+1):
+            tildeF_pow_i = np.linalg.matrix_power(tildeF, i)
+            tmp = np.matmul(tildeF_pow_i, np.matmul(K, z[k-i]))
+            x_est_f_direct_calc[k+1] = x_est_f_direct_calc[k+1] + tmp
+            if np.abs(tmp).max() < thr:
+                break
+    return x_est_f_direct_calc
 
 def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson's notations
     # time index k is from 0 to z.shape[0]
@@ -464,12 +480,12 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
         past, future = np.zeros((x_dim, 1)), np.zeros((x_dim, 1))
         for i in range(k):
             #if not(np.mod(i,100)): print(f'direct smoothing calc of time {k} out of {N}: processing past measurement {i} out of {k}')
-            tildeB = calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i)
+            tildeB = calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i, N)
             assert not(np.isnan(tildeB).any()), "tildeB is nan"
             past = past + np.matmul(tildeB, y[i])
         for i in range(k, N):
             #if not(np.mod(i,100)): print(f'direct smoothing calc of time {k} out of {N}: processing future measurement {i} out of {N}')
-            tildeC = calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i)
+            tildeC = calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i, N)
             assert not (np.isnan(tildeC).any()), "tildeC is nan"
             future = future + np.matmul(tildeC, y[i])
 
@@ -477,9 +493,77 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
 
     return x_est_s_direct_calc
 
+def direct_calc_smoothing_eq_startSmoothingFromAllMeas(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson's notations
+    # time index k is from 0 to z.shape[0]
+    N = z.shape[0]
+    inv_F_Sigma = np.linalg.inv(np.matmul(F, theoreticalBarSigma))
+    inv_F_Sigma_mult_K = np.matmul(inv_F_Sigma, K)
+    K_HT = np.matmul(K, H.transpose())
+    D_int = np.matmul(inv_F_Sigma, K_HT)
+    inv_tildeF = np.linalg.inv(tildeF)
+    thr = 1e-20 * np.abs(tildeF).max()
+    x_dim = tildeF.shape[0]
+
+    x_est_s_direct_calc = np.zeros((N, x_dim, 1))
+
+    for k in range(N):
+        print(f'direct_calc_smoothing_eq_startSmoothingFromAllMeas: time {k} out of {N}')
+        # term 1:
+        term1 = np.zeros((x_dim, 1))
+        i = k
+        while True:
+            i -= 1
+            tildeF_pow_k_minus_i_minus_1 = np.linalg.matrix_power(tildeF, k - i - 1)
+            tmp = np.matmul(tildeF_pow_k_minus_i_minus_1, np.matmul(K, z[i]))
+            term1 = term1 + tmp
+            if i == 0 or np.abs(tildeF_pow_k_minus_i_minus_1).max() < thr:
+                break
+
+        # term 2:
+        term2 = np.zeros((x_dim, 1))
+        i = k-1
+        while True:
+            i += 1
+            tildeF_pow_i_minus_k = np.linalg.matrix_power(tildeF, i-k)
+            K_a_i_minus_k = np.matmul(theoreticalBarSigma, np.matmul(tildeF_pow_i_minus_k.transpose(), inv_F_Sigma_mult_K))
+            tmp = np.matmul(K_a_i_minus_k, z[i])
+            term2 = term2 + tmp
+            if i == N-1 or np.abs(K_a_i_minus_k).max() < thr:
+                break
+
+        # term 3:
+        term3 = np.zeros((x_dim, 1))
+        n = k-1
+        while True:
+            n += 1
+            if n > N-1:
+                break
+            tildeF_pow_n_minus_k = np.linalg.matrix_power(tildeF, n-k)
+            K_a_n_minus_k = np.matmul(theoreticalBarSigma, np.matmul(tildeF_pow_n_minus_k.transpose(), inv_F_Sigma_mult_K))
+            chi_n = np.zeros((x_dim, 1))
+            #if n >= 1 and n < N:
+            i=n
+            while True:
+                i -= 1
+                if i < 0 or i > N-1:
+                    break
+                tildeF_pow_n_minus_i_minus_1 = np.linalg.matrix_power(tildeF, n - i - 1)
+                tmp = np.matmul(tildeF_pow_n_minus_i_minus_1, np.matmul(K, z[i]))
+                chi_n = chi_n + tmp
+                if i == 0 or np.abs(tildeF_pow_n_minus_i_minus_1).max() < thr:
+                    break
+            tmp = np.matmul(K_a_n_minus_k, np.matmul(H.transpose(), chi_n))
+            term3 = term3 + tmp
+            if np.abs(K_a_n_minus_k).max() < thr:
+                break
+
+        x_est_s_direct_calc[k] = term1 + term2 - term3
+
+    return x_est_s_direct_calc
+
 def simCovEst(F, H, processNoiseVar, measurementNoiseVar, enableTheoreticalResultsOnly, enableDirectVsRecursiveSmoothingDiffCheck):
 
-    N = 500#10000
+    N = 10000
     nIterUnmodeled = 20
     uN = 30
 
@@ -533,21 +617,87 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar, enableTheoreticalResul
         x_est_s, _, _, _ = k_filter.rts_smoother(x_est, cov)
         # x_est[k] has the estimation of x[k] given z[k]. so for compatability with Anderson we should propagate x_est:
         # x_est[1:] = k_filter.F * x_est[:-1]
-        # x_est_f is compatible with Anderson
+        # x_est_f is compatible with Anderson ==> x_est_f[k] has the estimation of x[k] given z[k-1]
 
         if enableDirectVsRecursiveSmoothingDiffCheck:
             # compare smoothing estimation to a direct (not recursive) calculation
+            x_est_f_direct_calc = direct_calc_filtering(tilde_z, steadyKalmanGain, tildeF)
+            x_est_s_direct_calc_eq_startSmoothingFromAllMeas = direct_calc_smoothing_eq_startSmoothingFromAllMeas(tilde_z, steadyKalmanGain, k_filter.H.transpose(), tildeF, k_filter.F, theoreticalBarSigma)
             x_est_s_direct_calc = direct_calc_smoothing(tilde_z, steadyKalmanGain, k_filter.H.transpose(), tildeF, k_filter.F, theoreticalBarSigma)
-            x_est_s_recursive_calc = recursive_calc_smoothing_anderson(tilde_z, steadyKalmanGain, k_filter.H.transpose(), tildeF, k_filter.F, theoreticalBarSigma)
+            x_est_f_recursive_calc, x_est_s_recursive_calc = recursive_calc_smoothing_anderson(tilde_z, steadyKalmanGain, k_filter.H.transpose(), tildeF, k_filter.F, theoreticalBarSigma)
+
+            filtering_recursiveSimon_direct_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_f_direct_calc - x_est_f, axis=1), 2), np.power(np.linalg.norm(x_est_f, axis=1), 2)))
+            filtering_recursiveAnderson_direct_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_f_direct_calc - x_est_f_recursive_calc, axis=1), 2), np.power(np.linalg.norm(x_est_f, axis=1), 2)))
+            filtering_recursiveAnderson_recursiveSimon_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_f - x_est_f_recursive_calc, axis=1), 2), np.power(np.linalg.norm(x_est_f, axis=1), 2)))
+
+            smoothing_eq_startSmoothingFromAllMeas_recursiveSimon_direct_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_s_direct_calc_eq_startSmoothingFromAllMeas - x_est_s, axis=1), 2), np.power(np.linalg.norm(x_est_s, axis=1), 2)))
+            smoothing_eq_startSmoothingFromAllMeas_recursiveAnderson_direct_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_s_direct_calc_eq_startSmoothingFromAllMeas - x_est_s_recursive_calc, axis=1), 2), np.power(np.linalg.norm(x_est_s, axis=1), 2)))
+            smoothing_eq_startSmoothingFromAllMeas_recursiveAnderson_recursiveSimon_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_s - x_est_s_recursive_calc, axis=1), 2), np.power(np.linalg.norm(x_est_s, axis=1), 2)))
 
             smoothing_recursiveSimon_direct_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_s_direct_calc - x_est_s, axis=1), 2), np.power(np.linalg.norm(x_est_s, axis=1), 2)))
             smoothing_recursiveAnderson_direct_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_s_direct_calc - x_est_s_recursive_calc, axis=1), 2), np.power(np.linalg.norm(x_est_s, axis=1), 2)))
             smoothing_recursiveAnderson_recursiveSimon_diff_energy = watt2db(np.divide(np.power(np.linalg.norm(x_est_s - x_est_s_recursive_calc, axis=1), 2), np.power(np.linalg.norm(x_est_s, axis=1), 2)))
-            plt.figure()
+
+            plt.figure(figsize=(16, 8))
+            plt.subplot(3, 3, 1)
+            plt.plot(filtering_recursiveSimon_direct_diff_energy, label='DirectVsSimon')
+            plt.title(r'Filtering: direct vs recursive diff')
+            plt.ylabel('db')
+            plt.legend()
+            plt.grid()
+
+            plt.subplot(3, 3, 4)
+            plt.plot(filtering_recursiveAnderson_direct_diff_energy, label='DirectVsAnderson')
+            #plt.title(r'Filtering: direct vs recursive diff')
+            plt.ylabel('db')
+            plt.legend()
+            plt.grid()
+
+            plt.subplot(3, 3, 7)
+            plt.plot(filtering_recursiveAnderson_recursiveSimon_diff_energy, label='SimonVsAnderson')
+            #plt.title(r'Filtering: direct vs recursive diff')
+            plt.ylabel('db')
+            plt.legend()
+            plt.grid()
+
+            plt.subplot(3, 3, 2)
+            plt.plot(smoothing_eq_startSmoothingFromAllMeas_recursiveSimon_direct_diff_energy, label='DirectVsSimon')
+            plt.title(r'Smoothing: eq_startSmoothingFromAllMeas vs recursive diff')
+            plt.ylabel('db')
+            plt.legend()
+            plt.grid()
+
+            plt.subplot(3, 3, 5)
+            plt.plot(smoothing_eq_startSmoothingFromAllMeas_recursiveAnderson_direct_diff_energy, label='DirectVsAnderson')
+            #plt.title(r'Smoothing: eq_startSmoothingFromAllMeas vs recursive diff')
+            plt.ylabel('db')
+            plt.legend()
+            plt.grid()
+
+            plt.subplot(3, 3, 8)
+            plt.plot(smoothing_eq_startSmoothingFromAllMeas_recursiveAnderson_recursiveSimon_diff_energy, label='SimonVsAnderson')
+            #plt.title(r'Smoothing: eq_startSmoothingFromAllMeas vs recursive diff')
+            plt.ylabel('db')
+            plt.legend()
+            plt.grid()
+
+            plt.subplot(3, 3, 3)
             plt.plot(smoothing_recursiveSimon_direct_diff_energy, label='DirectVsSimon')
+            plt.title(r'Smoothing: direct vs recursive diff')
+            plt.ylabel('db')
+            plt.legend()
+            plt.grid()
+
+            plt.subplot(3, 3, 6)
             plt.plot(smoothing_recursiveAnderson_direct_diff_energy, label='DirectVsAnderson')
+            #plt.title(r'Smoothing: direct vs recursive diff')
+            plt.ylabel('db')
+            plt.legend()
+            plt.grid()
+
+            plt.subplot(3, 3, 9)
             plt.plot(smoothing_recursiveAnderson_recursiveSimon_diff_energy, label='SimonVsAnderson')
-            plt.title(r'direct vs recursive diff')
+            #plt.title(r'Smoothing: direct vs recursive diff')
             plt.ylabel('db')
             plt.legend()
             plt.grid()
