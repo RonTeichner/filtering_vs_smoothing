@@ -273,7 +273,7 @@ if enableUnmodeledBehaviourHighDimSim:
     np.random.seed(11) # gives unmodeled noise thr of 4.57
     #np.random.seed(9)  # gives unmodeled noise thr of -57.54
 
-    enableDirectVsRecursiveSmoothingDiffCheck = False
+    enableDirectVsRecursiveSmoothingDiffCheck = True
 
     xdim, zdim = 5, 3
     if xdim == 1:
