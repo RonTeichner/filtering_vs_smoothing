@@ -475,7 +475,8 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
     y = np.matmul(K, z)
 
     x_est_s_direct_calc = np.zeros((N, x_dim, 1))
-    if enable_B_C_expression_verification: B_C_expression_max = np.zeros((N, N))
+    if enable_B_C_expression_verification:
+        B_C_FirstExpression_max, tildeD_expression_max, tildeD_futureExpression_max, tildeBC_recursive_max = np.zeros((N, N)), np.zeros((N, N)), np.zeros((N, N)), np.zeros((N, N))
     for k in range(N):
         print(f'direct smoothing calc of time {k} out of {N}')
         # past measurements:
@@ -488,13 +489,16 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
 
             if enable_B_C_expression_verification:
                 # check expression that exists in shifted time-series:
-                B_C_expression_max[k, i] = np.abs(calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i, 10*N) - calc_tildeB(tildeF, theoreticalBarSigma, D_int, k+1, i+1, 10*N)).max()
-            '''
-            tildeD_k_i_k = calc_tildeD(tildeF, D_int, k, i, k, N)
-            tildeD_k_i_k_plus_1 = calc_tildeD(tildeF, D_int, k, i, k+1, N)
-            B_expression = np.matmul(theoreticalBarSigma, tildeD_k_i_k) - np.matmul(theoreticalBarSigma, np.matmul(tildeF.transpose(), np.matmul(tildeD_k_i_k_plus_1, np.linalg.inv(tildeF))))
-            B_expression_max[k, i] = np.abs(B_expression).max()
-            '''
+                B_C_FirstExpression_max[k, i] = np.abs(calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i, 10*N) - calc_tildeB(tildeF, theoreticalBarSigma, D_int, k+1, i+1, 10*N)).max()
+
+                tildeD_k_i_k = calc_tildeD(tildeF, D_int, k, i, k, 10*N)
+                tildeD_k_plus_1_i_plus_1_k_plus_1 = calc_tildeD(tildeF, D_int, k+1, i+1, k+1, 10*N)
+                tildeD_expression = tildeD_k_i_k - tildeD_k_plus_1_i_plus_1_k_plus_1
+                tildeD_expression_max[k, i] = np.abs(tildeD_expression).max()
+
+                tildeB_recursive =  np.matmul(calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i, 10*N), tildeF) - calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i-1, 10*N)
+                tildeBC_recursive_max[k,i] = np.abs(tildeB_recursive).max()
+
         for i in range(k, N):
             #if not(np.mod(i,100)): print(f'direct smoothing calc of time {k} out of {N}: processing future measurement {i} out of {N}')
             tildeC = calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i, N)
@@ -503,15 +507,50 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
 
             if enable_B_C_expression_verification:
                 # check expression that exists in shifted time-series:
-                B_C_expression_max[k, i] = np.abs(calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i, 10*N) - calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k+1, i+1, 10*N)).max()
+                B_C_FirstExpression_max[k, i] = np.abs(calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i, 10*N) - calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k+1, i+1, 10*N)).max()
+
+                tildeD_k_i_i_plus_1 = calc_tildeD(tildeF, D_int, k, i, i+1, 10 * N)
+                tildeD_k_plus_1_i_plus_1_i_plus_2 = calc_tildeD(tildeF, D_int, k+1, i+1, i+2, 10*N)
+                tildeD_futureExpression = tildeD_k_i_i_plus_1 - tildeD_k_plus_1_i_plus_1_i_plus_2
+                tildeD_futureExpression_max[k, i] = np.abs(tildeD_futureExpression).max()
+
+                tildeC_recursive =  calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i+1, 10*N) - np.matmul(theoreticalBarSigma, np.matmul(tildeF.transpose(), np.matmul(np.linalg.inv(theoreticalBarSigma), calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i, 10*N))))
+                tildeBC_recursive_max[k,i] = np.abs(tildeC_recursive).max()
 
         x_est_s_direct_calc[k] = past + future
 
     if enable_B_C_expression_verification:
-        plt.imshow(B_C_expression_max, cmap='viridis')
+        plt.figure(figsize=(16,10))
+        plt.subplot(3,2,1)
+        plt.imshow(B_C_FirstExpression_max, cmap='viridis')
         plt.colorbar()
-        plt.title(f'B C expressions for shifted time-series, max = {B_C_expression_max.max()}')
+        plt.xlabel('i')
+        plt.ylabel('k')
+        plt.title(f'B C expressions for shifted time-series (1), max = {B_C_FirstExpression_max.max()}')
+
+        plt.subplot(3, 2, 2)
+        plt.imshow(tildeD_expression_max, cmap='viridis')
+        plt.colorbar()
+        plt.xlabel('i')
+        plt.ylabel('k')
+        plt.title(r'$max(|\tilde{D}_{k,i,k} - \tilde{D}_{k+1,i+1,k+1}|)\forall{k;i<k}$ maxVal=%f' % (tildeD_expression_max.max()))
+
+        plt.subplot(3, 2, 4)
+        plt.imshow(tildeD_futureExpression_max, cmap='viridis')
+        plt.colorbar()
+        plt.xlabel('i')
+        plt.ylabel('k')
+        plt.title(r'$max(|\tilde{D}_{k,i,i+1} - \tilde{D}_{k+1,i+1,i+2}|)\forall{k;i \geq k}$ maxVal=%f' % (tildeD_futureExpression_max.max()))
+
+        plt.subplot(3, 2, 5)
+        plt.imshow(tildeBC_recursive_max, cmap='viridis')
+        plt.colorbar()
+        plt.xlabel('i')
+        plt.ylabel('k')
+        plt.title(r'$max(|\tilde{B}_{k,i-1} - \tilde{B}_{k,i}\tilde{F}|)\forall{k;i \geq k}$; also for $\tilde{C}$ maxVal=%f' % (tildeBC_recursive_max.max()))
+
         plt.show()
+
 
     return x_est_s_direct_calc
 
