@@ -684,6 +684,105 @@ def simCovEst(F, H, processNoiseVar, measurementNoiseVar, enableTheoreticalResul
     filter_P_init = k_filter.P.copy()
     filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.random.randn(dim_x, 1))
 
+    if enableTheoreticalResultsOnly:
+        # investigate the direct form:
+        thr = 1e-10 * np.abs(tildeF).max()
+
+        inv_F_Sigma = np.linalg.inv(np.matmul(k_filter.F, theoreticalBarSigma))
+        K_HT = np.matmul(steadyKalmanGain, k_filter.H.transpose().transpose())
+        D_int = np.matmul(inv_F_Sigma, K_HT)
+        tildeB_k_k_minus_1 = np.eye(dim_x) - np.matmul(theoreticalBarSigma, calc_tildeD(tildeF, D_int, 0, -1, 0, 100000))
+        eigenValues, eigenVectors = np.linalg.eig(tildeB_k_k_minus_1)
+        idx = eigenValues.argsort()[::-1]
+        Bw = eigenValues[idx]
+        Bv = eigenVectors[:, idx]
+
+        tildeB_k_k_minus_2 = np.matmul(tildeB_k_k_minus_1, tildeF)
+        eigenValues, eigenVectors = np.linalg.eig(tildeB_k_k_minus_2)
+        idx = eigenValues.argsort()[::-1]
+        Bw_2 = eigenValues[idx]
+        Bv_2 = eigenVectors[:, idx]
+
+        tildeB_k_k_minus_3 = np.matmul(tildeB_k_k_minus_2, tildeF)
+        eigenValues, eigenVectors = np.linalg.eig(tildeB_k_k_minus_3)
+        idx = eigenValues.argsort()[::-1]
+        Bw_3 = eigenValues[idx]
+        Bv_3 = eigenVectors[:, idx]
+
+        tildeB_k_k_minus_4 = np.matmul(tildeB_k_k_minus_3, tildeF)
+        eigenValues, eigenVectors = np.linalg.eig(tildeB_k_k_minus_4)
+        idx = eigenValues.argsort()[::-1]
+        Bw_4 = eigenValues[idx]
+        Bv_4 = eigenVectors[:, idx]
+
+        tildeB_k_k_minus_5 = np.matmul(tildeB_k_k_minus_4, tildeF)
+        eigenValues, eigenVectors = np.linalg.eig(tildeB_k_k_minus_5)
+        idx = eigenValues.argsort()[::-1]
+        Bw_5 = eigenValues[idx]
+        Bv_5 = eigenVectors[:, idx]
+
+        C_k_k = np.matmul(theoreticalBarSigma, inv_F_Sigma - np.matmul(tildeF.transpose(), np.matmul(np.linalg.inv(theoreticalBarSigma), np.eye(dim_x) - tildeB_k_k_minus_1)))
+        C_k_k_second_for_sanity = np.matmul(theoreticalBarSigma, inv_F_Sigma - np.matmul(tildeF.transpose(), calc_tildeD(tildeF, D_int, 0, -1, 0, 100000)))
+        assert np.abs(C_k_k_second_for_sanity - C_k_k).max() < thr, 'C_k_k problem'
+        eigenValues, eigenVectors = np.linalg.eig(C_k_k)
+        idx = eigenValues.argsort()[::-1]
+        Cw = eigenValues[idx]
+        Cv = eigenVectors[:, idx]
+
+
+        plt.figure()
+        origin = [0, 0]
+        plt.grid()
+
+        '''
+        maxVal = max(np.maximum(*np.abs([Bw, Cw])))
+        plt.xlim([-maxVal, maxVal])
+        plt.ylim([-maxVal, maxVal])
+        plt.quiver(*origin, *Bv[:, 0],  angles='xy', scale_units='xy', scale=1 / np.abs(Bw[0]), color='g', label=r'$\tildeB_{k,k-1}$')
+        plt.quiver(*origin, *Bv[:, 1], angles='xy', scale_units='xy', scale=1 / np.abs(Bw[1]), color='g')
+
+        plt.quiver(*origin, *Cv[:, 0],  angles='xy', scale_units='xy', scale=1 / np.abs(Cw[0]), color='b', label=r'$\tildeC_{k,k}$')
+        plt.quiver(*origin, *Cv[:, 1], angles='xy', scale_units='xy', scale=1 / np.abs(Cw[1]), color='b')
+
+        plt.title(r'Eigenvectors with $||v_i||_2=\lambda_i$')
+        '''
+        maxVal = 1
+        plt.xlim([-maxVal, maxVal])
+        plt.ylim([-maxVal, maxVal])
+
+        plt.quiver(*origin, *Bv[:, 0],  angles='xy', scale_units='xy', scale=1, color='g', label=r'$\tildeB_{k,k-1}$')
+        plt.quiver(*origin, *Bv[:, 1], angles='xy', scale_units='xy', scale=1, color='g')
+
+        plt.quiver(*origin, *Cv[:, 0],  angles='xy', scale_units='xy', scale=1, color='b', label=r'$\tildeC_{k,k}$')
+        plt.quiver(*origin, *Cv[:, 1], angles='xy', scale_units='xy', scale=1, color='b')
+
+        plt.title(r'Eigenvectors')
+        plt.legend()
+
+        plt.figure()
+        origin = [0, 0]
+        plt.grid()
+        maxVal = 1
+        plt.xlim([-maxVal, maxVal])
+        plt.ylim([-maxVal, maxVal])
+
+        plt.quiver(*origin, *Bv[:, 0], angles='xy', scale_units='xy', scale=1, color='g', label=r'$\tildeB_{k,k-1}$')
+        #plt.quiver(*origin, *Bv[:, 1], angles='xy', scale_units='xy', scale=1, color='g')
+        plt.quiver(*origin, *Bv_2[:, 0], angles='xy', scale_units='xy', scale=1, color='b', label=r'$\tildeB_{k,k-2}$')
+        #plt.quiver(*origin, *Bv_2[:, 1], angles='xy', scale_units='xy', scale=1, color='b')
+        plt.quiver(*origin, *Bv_3[:, 0], angles='xy', scale_units='xy', scale=1, color='r', label=r'$\tildeB_{k,k-3}$')
+        #plt.quiver(*origin, *Bv_3[:, 1], angles='xy', scale_units='xy', scale=1, color='r')
+
+        plt.quiver(*origin, *Bv_4[:, 0], angles='xy', scale_units='xy', scale=1, color='k', label=r'$\tildeB_{k,k-4}$')
+        plt.quiver(*origin, *Bv_5[:, 0], angles='xy', scale_units='xy', scale=1, color='m', label=r'$\tildeB_{k,k-5}$')
+
+        plt.legend()
+
+        plt.show()
+        x=3
+
+
+
     if not enableTheoreticalResultsOnly:
         tilde_x, tilde_z = gen_measurements(k_filter.F, k_filter.H, k_filter.Q, k_filter.R, k_filter.P, N)
 

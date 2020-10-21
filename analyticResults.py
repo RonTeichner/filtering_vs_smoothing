@@ -11,8 +11,8 @@ enableFig_fig_1d_filt_const_err = False
 enableFig_sm_vs_fl_different_f = False  # also \Delta_{FS}
 enableFig_conclusions = False
 enableUnmodeledBehaviourSim = False
-enableUnmodeledBehaviourHighDimSim = True
-enableUnmodeledBehaviourHighDimSim_theoreticalOnly = False
+enableUnmodeledBehaviourHighDimSim = False
+enableUnmodeledBehaviourHighDimSim_theoreticalOnly = True
 
 if enableFig_conclusions:
     std_process_noises = 1
@@ -328,8 +328,8 @@ if enableUnmodeledBehaviourHighDimSim_theoreticalOnly:
         if not np.mod(iterCounter, 100):
             print(f'iterCounter = {iterCounter}')
 
-        #xdim, zdim = 2, 1
-        xdim, zdim = 5, 3
+        xdim, zdim = 2, 2
+        #xdim, zdim = 5, 3
         # draw F with max eigenvalue of 1
         if xdim == 1:
             F = -1 + 2*np.random.rand(xdim, xdim)
