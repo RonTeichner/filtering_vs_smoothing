@@ -462,7 +462,7 @@ def direct_calc_filtering(z, K, tildeF):  # Anderson's notations
     return x_est_f_direct_calc
 
 def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson's notations
-    enable_B_C_expression_verification = False
+    enable_B_C_expression_verification = True
     # time index k is from 0 to z.shape[0]
     N = z.shape[0]
     inv_F_Sigma = np.linalg.inv(np.matmul(F, theoreticalBarSigma))
@@ -476,7 +476,7 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
 
     x_est_s_direct_calc = np.zeros((N, x_dim, 1))
     if enable_B_C_expression_verification:
-        B_C_FirstExpression_max, tildeD_expression_max, tildeD_futureExpression_max, tildeBC_recursive_max = np.zeros((N, N)), np.zeros((N, N)), np.zeros((N, N)), np.zeros((N, N))
+        B_C_FirstExpression_max, tildeD_expression_max, tildeD_futureExpression_max, tildeBC_recursive_max, initB_max = np.zeros((N, N)), np.zeros((N, N)), np.zeros((N, N)), np.zeros((N, N)), np.zeros((N, N))
     for k in range(N):
         print(f'direct smoothing calc of time {k} out of {N}')
         # past measurements:
@@ -499,6 +499,10 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
                 tildeB_recursive =  np.matmul(calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i, 10*N), tildeF) - calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i-1, 10*N)
                 tildeBC_recursive_max[k,i] = np.abs(tildeB_recursive).max()
 
+                if i == k-1:
+                    initB = (np.eye(x_dim) - np.matmul(theoreticalBarSigma, calc_tildeD(tildeF, D_int, 0, -1, 0, 10*N))) - calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, i, 10*N)
+                    initB_max[k, i] = np.abs(initB).max()
+
         for i in range(k, N):
             #if not(np.mod(i,100)): print(f'direct smoothing calc of time {k} out of {N}: processing future measurement {i} out of {N}')
             tildeC = calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i, N)
@@ -514,7 +518,10 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
                 tildeD_futureExpression = tildeD_k_i_i_plus_1 - tildeD_k_plus_1_i_plus_1_i_plus_2
                 tildeD_futureExpression_max[k, i] = np.abs(tildeD_futureExpression).max()
 
-                tildeC_recursive =  calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i+1, 10*N) - np.matmul(theoreticalBarSigma, np.matmul(tildeF.transpose(), np.matmul(np.linalg.inv(theoreticalBarSigma), calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i, 10*N))))
+                if i == k:
+                    tildeC_recursive = calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, k, 10*N) - np.matmul(theoreticalBarSigma, inv_F_Sigma) + np.matmul(np.matmul(theoreticalBarSigma, np.matmul(tildeF.transpose(), np.linalg.inv(theoreticalBarSigma))), (np.eye(x_dim) - calc_tildeB(tildeF, theoreticalBarSigma, D_int, k, k-1, 10*N)))
+                else:
+                    tildeC_recursive =  calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i, 10*N) - np.matmul(theoreticalBarSigma, np.matmul(tildeF.transpose(), np.matmul(np.linalg.inv(theoreticalBarSigma), calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, i-1, 10*N))))
                 tildeBC_recursive_max[k,i] = np.abs(tildeC_recursive).max()
 
         x_est_s_direct_calc[k] = past + future
@@ -550,7 +557,7 @@ def direct_calc_smoothing(z, K, H, tildeF, F, theoreticalBarSigma):  # Anderson'
         plt.title(r'$max(|\tilde{B}_{k,i-1} - \tilde{B}_{k,i}\tilde{F}|)\forall{k;i \geq k}$; also for $\tilde{C}$ maxVal=%f' % (tildeBC_recursive_max.max()))
 
         plt.show()
-
+        print(f'maxVal of initB: {initB_max.max()}')
 
     return x_est_s_direct_calc
 
