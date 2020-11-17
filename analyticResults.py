@@ -11,8 +11,8 @@ enableFig_fig_1d_filt_const_err = False
 enableFig_sm_vs_fl_different_f = False  # also \Delta_{FS}
 enableFig_conclusions = False
 enableUnmodeledBehaviourSim = False
-enableUnmodeledBehaviourHighDimSim = False
-enableUnmodeledBehaviourHighDimSim_theoreticalOnly = True
+enableUnmodeledBehaviourHighDimSim = True
+enableUnmodeledBehaviourHighDimSim_theoreticalOnly = False
 
 if enableFig_conclusions:
     std_process_noises = 1
