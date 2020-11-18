@@ -39,3 +39,8 @@ def GenMeasurements(N, batchSize, sysModel):
 
     return z, x
 
+def Anderson_filter_smoother(z, sysModel, filter_P_init, filterStateInit):
+    # filter_P_init: [1, batchSize, dim_x, dim_x]
+    # filterStateInit: [1, batchSize, dim_x, 1]
+    # z: [N, batchSize, dim_z, 1]
+    
