@@ -5,7 +5,9 @@ import matplotlib.cm as cm
 from pytorchKalman_func import *
 from analyticResults_func import watt2db
 
-np.random.seed(11)
+true_for_object = True
+
+#np.random.seed(11)
 dim_x, dim_z = 5, 3
 N = 1000  # time steps
 batchSize = 4
@@ -30,7 +32,15 @@ x_est_f_A, x_est_s_A = Anderson_filter_smoother(z, sysModel, filter_P_init, filt
 
 # run pytorch filter & smoother:
 # (filter_P_init is not in use because this filter works from the start on the steady-state-gain)
-x_est_f_P, x_est_s_P = Pytorch_filter_smoother(z, sysModel, filterStateInit)
+if true_for_object:
+    print('Pytorch via class Pytorch_filter_smoother_Obj')
+    filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False).cuda()
+    z = torch.tensor(z, dtype=torch.float).cuda()
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel)
+    x_est_f_P, x_est_s_P = pytorchEstimator(z, filterStateInit)
+else:
+    print('Pytorch via function Pytorch_filter_smoother')
+    x_est_f_P, x_est_s_P = Pytorch_filter_smoother(z, sysModel, filterStateInit)
 
 x_est_f_P = x_est_f_P.cpu().numpy()
 x_est_s_P = x_est_s_P.cpu().numpy()
