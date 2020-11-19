@@ -8,7 +8,7 @@ from analyticResults_func import watt2db
 np.random.seed(11)
 dim_x, dim_z = 5, 3
 N = 1000  # time steps
-batchSize = 1
+batchSize = 4
 
 # estimator init values:
 filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
@@ -35,14 +35,15 @@ x_est_f_P, x_est_s_P = Pytorch_filter_smoother(z, sysModel, filterStateInit)
 x_est_f_P = x_est_f_P.cpu().numpy()
 x_est_s_P = x_est_s_P.cpu().numpy()
 
-filtering_recursiveAnderson_recursivePytorch_diff_energy = watt2db(np.power(np.linalg.norm(x_est_f_A[:, 0] - x_est_f_P[:, 0], axis=1), 2))
-smoothing_recursiveAnderson_recursivePytorch_diff_energy = watt2db(np.power(np.linalg.norm(x_est_s_A[:, 0] - x_est_s_P[:, 0], axis=1), 2))
+for b in range(batchSize):
+    filtering_recursiveAnderson_recursivePytorch_diff_energy = watt2db(np.power(np.linalg.norm(x_est_f_A[:, b] - x_est_f_P[:, b], axis=1), 2))
+    smoothing_recursiveAnderson_recursivePytorch_diff_energy = watt2db(np.power(np.linalg.norm(x_est_s_A[:, b] - x_est_s_P[:, b], axis=1), 2))
 
-plt.figure(figsize=(16, 8))
-plt.plot(filtering_recursiveAnderson_recursivePytorch_diff_energy, label='Filtering')
-plt.plot(smoothing_recursiveAnderson_recursivePytorch_diff_energy, label='Smoothing')
-plt.title(r'Anderson vs Pytorch')
-plt.ylabel('db')
-plt.legend()
-plt.grid()
-plt.show()
+    plt.figure(figsize=(16, 8))
+    plt.plot(filtering_recursiveAnderson_recursivePytorch_diff_energy, label='Filtering')
+    plt.plot(smoothing_recursiveAnderson_recursivePytorch_diff_energy, label='Smoothing')
+    plt.title(f'Anderson vs Pytorch; time-series no. {b}')
+    plt.ylabel('db')
+    plt.legend()
+    plt.grid()
+    plt.show()
