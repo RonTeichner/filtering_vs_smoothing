@@ -121,9 +121,9 @@ def Pytorch_filter_smoother(z, sysModel, filterStateInit):
 
 # class definition
 class Pytorch_filter_smoother_Obj(nn.Module):
-    def __init__(self, sysModel):
+    def __init__(self, sysModel, useCuda=True):
         super(Pytorch_filter_smoother_Obj, self).__init__()
-
+        self.useCuda = useCuda
         # filter_P_init: [1, batchSize, dim_x, dim_x] is not in use because this filter works from the start on the steady-state-gain
         # filterStateInit: [1, batchSize, dim_x, 1]
         # z: [N, batchSize, dim_z, 1]
@@ -139,25 +139,37 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         thr = 1e-20 * np.abs(tildeF).max()
 
         # stuff to cuda:
-        self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous().cuda()
-        self.tildeF_transpose = torch.tensor(tildeF.transpose(), dtype=torch.float, requires_grad=False).contiguous().cuda()
-        self.K = torch.tensor(K, dtype=torch.float, requires_grad=False).contiguous().cuda()
-        self.H = torch.tensor(H, dtype=torch.float, requires_grad=False).contiguous().cuda()
-        self.Sint = torch.tensor(Sint, dtype=torch.float, requires_grad=False).contiguous().cuda()
-        self.H_transpose = torch.tensor(H.transpose(), dtype=torch.float, requires_grad=False).contiguous().cuda()
-        self.thr = torch.tensor(thr, dtype=torch.float, requires_grad=False).contiguous().cuda()
-        self.theoreticalBarSigma = torch.tensor(theoreticalBarSigma, dtype=torch.float, requires_grad=False).contiguous().cuda()
-
-        self.Lin = nn.Linear(self.dim_x, self.dim_x, bias=False).cuda()
+        if self.useCuda:
+            self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.tildeF_transpose = torch.tensor(tildeF.transpose(), dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.K = torch.tensor(K, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.H = torch.tensor(H, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.Sint = torch.tensor(Sint, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.H_transpose = torch.tensor(H.transpose(), dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.thr = torch.tensor(thr, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.theoreticalBarSigma = torch.tensor(theoreticalBarSigma, dtype=torch.float, requires_grad=False).contiguous().cuda()
+        else:
+            self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous()
+            self.tildeF_transpose = torch.tensor(tildeF.transpose(), dtype=torch.float, requires_grad=False).contiguous()
+            self.K = torch.tensor(K, dtype=torch.float, requires_grad=False).contiguous()
+            self.H = torch.tensor(H, dtype=torch.float, requires_grad=False).contiguous()
+            self.Sint = torch.tensor(Sint, dtype=torch.float, requires_grad=False).contiguous()
+            self.H_transpose = torch.tensor(H.transpose(), dtype=torch.float, requires_grad=False).contiguous()
+            self.thr = torch.tensor(thr, dtype=torch.float, requires_grad=False).contiguous()
+            self.theoreticalBarSigma = torch.tensor(theoreticalBarSigma, dtype=torch.float, requires_grad=False).contiguous()
 
     def forward(self, z, filterStateInit):
         # z, filterStateInit are cuda
 
         # filtering, inovations:
         N, batchSize = z.shape[0], z.shape[1]
+        if self.useCuda:
+            hat_x_k_plus_1_given_k = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False).cuda()  #  hat_x_k_plus_1_given_k is in index [k+1]
+            bar_z_k = torch.zeros(N, batchSize, self.dim_z, 1, dtype=torch.float, requires_grad=False).cuda()
+        else:
+            hat_x_k_plus_1_given_k = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False)  #  hat_x_k_plus_1_given_k is in index [k+1]
+            bar_z_k = torch.zeros(N, batchSize, self.dim_z, 1, dtype=torch.float, requires_grad=False)
 
-        hat_x_k_plus_1_given_k = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False).cuda()  #  hat_x_k_plus_1_given_k is in index [k+1]
-        bar_z_k = torch.zeros(N, batchSize, self.dim_z, 1, dtype=torch.float, requires_grad=False).cuda()
         hat_x_k_plus_1_given_k[0] = filterStateInit[0]
         bar_z_k[0] = z[0]
 
@@ -169,7 +181,10 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         bar_z_k = z - torch.matmul(self.H_transpose, hat_x_k_plus_1_given_k)
 
         # smoothing:
-        hat_x_k_given_N = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False).cuda()
+        if self.useCuda:
+            hat_x_k_given_N = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False).cuda()
+        else:
+            hat_x_k_given_N = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False)
 
         for k in range(N):
             # for i==k:

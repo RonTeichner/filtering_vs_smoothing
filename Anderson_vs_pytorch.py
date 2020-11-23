@@ -11,6 +11,7 @@ true_for_object = True
 dim_x, dim_z = 5, 3
 N = 1000  # time steps
 batchSize = 4
+useCuda = False
 
 # estimator init values:
 filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
@@ -34,9 +35,15 @@ x_est_f_A, x_est_s_A = Anderson_filter_smoother(z, sysModel, filter_P_init, filt
 # (filter_P_init is not in use because this filter works from the start on the steady-state-gain)
 if true_for_object:
     print('Pytorch via class Pytorch_filter_smoother_Obj')
-    filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False).cuda()
-    z = torch.tensor(z, dtype=torch.float).cuda()
-    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel)
+    filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False)
+    if useCuda:
+        filterStateInit = filterStateInit.cuda()
+    z = torch.tensor(z, dtype=torch.float)
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, useCuda)
+    if useCuda:
+        z = z.cuda()
+        pytorchEstimator = pytorchEstimator.cuda()
+
     x_est_f_P, x_est_s_P = pytorchEstimator(z, filterStateInit)
 else:
     print('Pytorch via function Pytorch_filter_smoother')
