@@ -8,6 +8,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+#from __future__ import print_function
+#from __future__ import division
+
 
 def GenSysModel(dim_x, dim_z):
     if dim_x == 1:
@@ -121,9 +124,10 @@ def Pytorch_filter_smoother(z, sysModel, filterStateInit):
 
 # class definition
 class Pytorch_filter_smoother_Obj(nn.Module):
-    def __init__(self, sysModel, useCuda=True):
+    def __init__(self, sysModel, enableSmoothing = True, useCuda=True):
         super(Pytorch_filter_smoother_Obj, self).__init__()
         self.useCuda = useCuda
+        self.enableSmoothing = enableSmoothing
         # filter_P_init: [1, batchSize, dim_x, dim_x] is not in use because this filter works from the start on the steady-state-gain
         # filterStateInit: [1, batchSize, dim_x, 1]
         # z: [N, batchSize, dim_z, 1]
@@ -163,6 +167,7 @@ class Pytorch_filter_smoother_Obj(nn.Module):
 
         # filtering, inovations:
         N, batchSize = z.shape[0], z.shape[1]
+
         if self.useCuda:
             hat_x_k_plus_1_given_k = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False).cuda()  #  hat_x_k_plus_1_given_k is in index [k+1]
             bar_z_k = torch.zeros(N, batchSize, self.dim_z, 1, dtype=torch.float, requires_grad=False).cuda()
@@ -186,17 +191,18 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         else:
             hat_x_k_given_N = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False)
 
-        for k in range(N):
-            # for i==k:
-            Ka_i_minus_k = torch.matmul(self.theoreticalBarSigma, self.Sint)
-            hat_x_k_given_i = hat_x_k_plus_1_given_k[k] + torch.matmul(Ka_i_minus_k, bar_z_k[k])
-            for i in range(k + 1, N):
-                Ka_i_minus_k = torch.matmul(self.theoreticalBarSigma, torch.matmul(torch.matrix_power(self.tildeF_transpose, i - k), self.Sint))
-                hat_x_k_given_i = hat_x_k_given_i + torch.matmul(Ka_i_minus_k, bar_z_k[i])
+        if self.enableSmoothing:
+            for k in range(N):
+                # for i==k:
+                Ka_i_minus_k = torch.matmul(self.theoreticalBarSigma, self.Sint)
+                hat_x_k_given_i = hat_x_k_plus_1_given_k[k] + torch.matmul(Ka_i_minus_k, bar_z_k[k])
+                for i in range(k + 1, N):
+                    Ka_i_minus_k = torch.matmul(self.theoreticalBarSigma, torch.matmul(torch.matrix_power(self.tildeF_transpose, i - k), self.Sint))
+                    hat_x_k_given_i = hat_x_k_given_i + torch.matmul(Ka_i_minus_k, bar_z_k[i])
 
-                if torch.max(torch.abs(Ka_i_minus_k)) < self.thr:
-                    break
-            hat_x_k_given_N[k] = hat_x_k_given_i
+                    if torch.max(torch.abs(Ka_i_minus_k)) < self.thr:
+                        break
+                hat_x_k_given_N[k] = hat_x_k_given_i
 
         #  x_est_f, x_est_s =  hat_x_k_plus_1_given_k, hat_x_k_given_N - these are identical values
 

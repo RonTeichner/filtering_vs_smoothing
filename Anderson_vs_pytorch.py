@@ -39,7 +39,7 @@ if true_for_object:
     if useCuda:
         filterStateInit = filterStateInit.cuda()
     z = torch.tensor(z, dtype=torch.float)
-    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, useCuda)
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
     if useCuda:
         z = z.cuda()
         pytorchEstimator = pytorchEstimator.cuda()
