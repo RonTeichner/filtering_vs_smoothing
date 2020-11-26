@@ -210,5 +210,8 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         return hat_x_k_plus_1_given_k, hat_x_k_given_N
 
 
-def calcTimeSeriesMeanEnergy(x):
+def calcTimeSeriesMeanRootEnergy(x):
     return torch.mean(torch.norm(x, dim=2), dim=0)
+
+def calcTimeSeriesMeanEnergy(x):
+    return torch.mean(torch.sum(torch.pow(x, 2), dim=2), dim=0)
