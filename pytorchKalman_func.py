@@ -178,14 +178,11 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         N, batchSize = z.shape[0], z.shape[1]
 
         if self.useCuda:
-            hat_x_k_plus_1_given_k = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False).cuda()  #  hat_x_k_plus_1_given_k is in index [k+1]
-            bar_z_k = torch.zeros(N, batchSize, self.dim_z, 1, dtype=torch.float, requires_grad=False).cuda()
+            hat_x_k_plus_1_given_k = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False).cuda()  #  hat_x_k_plus_1_given_k is in index [k+1]            
         else:
-            hat_x_k_plus_1_given_k = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False)  #  hat_x_k_plus_1_given_k is in index [k+1]
-            bar_z_k = torch.zeros(N, batchSize, self.dim_z, 1, dtype=torch.float, requires_grad=False)
+            hat_x_k_plus_1_given_k = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False)  #  hat_x_k_plus_1_given_k is in index [k+1]            
 
         hat_x_k_plus_1_given_k[0] = filterStateInit[0]
-        bar_z_k[0] = z[0]
 
         hat_x_k_plus_1_given_k[1] = torch.matmul(self.tildeF, hat_x_k_plus_1_given_k[0]) + torch.matmul(self.K, z[0])
         K_dot_z = torch.matmul(self.K, z)
