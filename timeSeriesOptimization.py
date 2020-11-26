@@ -13,7 +13,7 @@ import time
 
 enableOptimization = False
 enableInvestigation = True
-filePath = "./minimizeFiltering.pt"
+filePath = "./minimizeSmoothing.pt"
 
 if enableOptimization:
     #np.random.seed(11)
@@ -40,7 +40,7 @@ if enableOptimization:
         H_transpose = H_transpose.cuda()
 
     # craete pytorch estimator:
-    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=False, useCuda=useCuda)
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
     if useCuda:
         pytorchEstimator = pytorchEstimator.cuda()
     pytorchEstimator.eval()
@@ -70,7 +70,7 @@ if enableOptimization:
         x_est_f, x_est_s = pytorchEstimator(z, filterStateInit)
         filteringEnergy = calcTimeSeriesMeanEnergy(x_est_f)  # mean energy at every batch [volt]
         smoothingEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
-        loss = torch.mean(filteringEnergy)
+        loss = torch.mean(smoothingEnergy)
         # loss.is_contiguous()
         loss.backward()
         optimizer.step()  # parameter update
@@ -118,24 +118,31 @@ if enableInvestigation:
 
     plt.subplots(nrows=3, ncols=1)
 
-    plt.subplot(3, 1, 1)
+    plt.subplot(4, 1, 1)
     u_norm = np.linalg.norm(u[:-1, minNormFilteringIndex, :, 0], axis=1)
     plt.plot(u_norm, label=r'${||u||}_2$')
     plt.title(r'$\frac{1}{N}\sum_{k} {||x^u_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(u_norm, 2).mean())))
     plt.grid()
     plt.legend()
 
-    plt.subplot(3, 1, 2)
+    plt.subplot(4, 1, 2)
     z_norm = np.linalg.norm(z[:-1, minNormFilteringIndex, :, 0], axis=1)
     plt.plot(z_norm, label=r'${||z||}_2$')
     plt.title(r'$\frac{1}{N}\sum_{k} {||H^{T} x^u_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(z_norm, 2).mean())))
     plt.grid()
     plt.legend()
 
-    plt.subplot(3, 1, 3)
+    plt.subplot(4, 1, 3)
     x_est_norm = np.linalg.norm(x_est_f[:, minNormFilteringIndex, :, 0], axis=1)
     plt.plot(x_est_norm, label=r'${||\hat{x}_{k \mid k-1}||}_2$')
     plt.title(r'$\frac{1}{N}\sum_{k} {||\xi_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(x_est_norm, 2).mean())))
+    plt.grid()
+    plt.legend()
+
+    plt.subplot(4, 1, 4)
+    x_est_norm = np.linalg.norm(x_est_s[:, minNormFilteringIndex, :, 0], axis=1)
+    plt.plot(x_est_norm, label=r'${||\hat{x}_{k \mid k-1}||}_2$')
+    plt.title(r'$\frac{1}{N}\sum_{k} {||\xi^s_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(x_est_norm, 2).mean())))
     plt.grid()
     plt.legend()
 

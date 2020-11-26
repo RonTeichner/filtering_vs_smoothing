@@ -142,6 +142,9 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         Sint = np.matmul(np.linalg.inv(np.matmul(F, theoreticalBarSigma)), K)
         thr = 1e-20 * np.abs(tildeF).max()
 
+        smootherRecursiveGain = np.matmul(theoreticalBarSigma, np.matmul(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma)))
+        smootherGain = np.linalg.inv(F) - smootherRecursiveGain
+
         # stuff to cuda:
         if self.useCuda:
             self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous().cuda()
@@ -152,6 +155,9 @@ class Pytorch_filter_smoother_Obj(nn.Module):
             self.H_transpose = torch.tensor(H.transpose(), dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.thr = torch.tensor(thr, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.theoreticalBarSigma = torch.tensor(theoreticalBarSigma, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.smootherRecursiveGain = torch.tensor(smootherRecursiveGain, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.smootherGain = torch.tensor(smootherGain, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.Ka_0 = torch.tensor(Ka_0, dtype=torch.float, requires_grad=False).contiguous().cuda()
         else:
             self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous()
             self.tildeF_transpose = torch.tensor(tildeF.transpose(), dtype=torch.float, requires_grad=False).contiguous()
@@ -161,11 +167,14 @@ class Pytorch_filter_smoother_Obj(nn.Module):
             self.H_transpose = torch.tensor(H.transpose(), dtype=torch.float, requires_grad=False).contiguous()
             self.thr = torch.tensor(thr, dtype=torch.float, requires_grad=False).contiguous()
             self.theoreticalBarSigma = torch.tensor(theoreticalBarSigma, dtype=torch.float, requires_grad=False).contiguous()
+            self.smootherRecursiveGain = torch.tensor(smootherRecursiveGain, dtype=torch.float, requires_grad=False).contiguous()
+            self.smootherGain = torch.tensor(smootherGain, dtype=torch.float, requires_grad=False).contiguous()
+            self.Ka_0 = torch.tensor(Ka_0, dtype=torch.float, requires_grad=False).contiguous()
 
     def forward(self, z, filterStateInit):
         # z, filterStateInit are cuda
 
-        # filtering, inovations:
+        # filtering
         N, batchSize = z.shape[0], z.shape[1]
 
         if self.useCuda:
@@ -183,8 +192,6 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         for k in range(N - 1):
             hat_x_k_plus_1_given_k[k + 1] = torch.matmul(self.tildeF, hat_x_k_plus_1_given_k[k].clone()) + K_dot_z[k]
 
-        bar_z_k = z - torch.matmul(self.H_transpose, hat_x_k_plus_1_given_k)
-
         # smoothing:
         if self.useCuda:
             hat_x_k_given_N = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False).cuda()
@@ -192,17 +199,11 @@ class Pytorch_filter_smoother_Obj(nn.Module):
             hat_x_k_given_N = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False)
 
         if self.enableSmoothing:
-            for k in range(N):
-                # for i==k:
-                Ka_i_minus_k = torch.matmul(self.theoreticalBarSigma, self.Sint)
-                hat_x_k_given_i = hat_x_k_plus_1_given_k[k] + torch.matmul(Ka_i_minus_k, bar_z_k[k])
-                for i in range(k + 1, N):
-                    Ka_i_minus_k = torch.matmul(self.theoreticalBarSigma, torch.matmul(torch.matrix_power(self.tildeF_transpose, i - k), self.Sint))
-                    hat_x_k_given_i = hat_x_k_given_i + torch.matmul(Ka_i_minus_k, bar_z_k[i])
-
-                    if torch.max(torch.abs(Ka_i_minus_k)) < self.thr:
-                        break
-                hat_x_k_given_N[k] = hat_x_k_given_i
+            bar_z_N_minus_1 = z[N - 1] - torch.matmul(self.H_transpose, hat_x_k_plus_1_given_k[N - 1]) # smoother init val
+            hat_x_k_given_N[N-1] = hat_x_k_plus_1_given_k[N-1] + torch.matmul(self.Ka_0, bar_z_N_minus_1)
+            filteringInput = torch.matmul(self.smootherGain, hat_x_k_plus_1_given_k)
+            for k in range(N-2, -1, -1):
+                hat_x_k_given_N[k] = torch.matmul(self.smootherRecursiveGain, hat_x_k_given_N[k+1].clone()) + filteringInput[k+1]#torch.matmul(self.smootherGain, hat_x_k_plus_1_given_k[k+1])
 
         #  x_est_f, x_est_s =  hat_x_k_plus_1_given_k, hat_x_k_given_N - these are identical values
 
