@@ -11,7 +11,7 @@ import torch.optim as optim
 import pickle
 import time
 
-enableOptimization = False
+enableOptimization = True
 enableInvestigation = True
 np.random.seed(13)
 filePath = "./maximizeFiltering1D.pt"
@@ -68,7 +68,7 @@ if enableOptimization:
     epoch = -1
     displayEvery_n_epochs = 100
     startTime = time.time()
-    maxEnergyEfficience, lastSaveEpoch = 0, 0
+    maxEnergyEfficience, lastSaveEpoch, lastEnergyEfficienceMean = 0, 0, 0
     nEpochsWithNoSaveThr = 1000
     while True:
         epoch += 1
@@ -83,7 +83,9 @@ if enableOptimization:
             filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
             meanInputEnergy = calcTimeSeriesMeanEnergy(u[:-1])  # mean energy at every batch [volt]
-            loss = torch.mean(F.relu(meanInputEnergy-meanRootInputEnergyThr) - filteringMeanEnergy)
+            inputEnergy = torch.sum(torch.pow(u[:-1], 2), dim=2)
+            #loss = torch.mean(F.relu(meanInputEnergy-meanRootInputEnergyThr) - filteringMeanEnergy)
+            loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - filteringMeanEnergy)
         elif optimizationMode == 'maximizeSmoothing':
             filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
@@ -103,16 +105,19 @@ if enableOptimization:
 
         if np.mod(epoch, displayEvery_n_epochs) == 0:
             if energyEfficience.max() > maxEnergyEfficience:
-                lastSaveEpoch = epoch
                 maxEnergyEfficience = energyEfficience.max()
-                print('SAVED epoch: %d - max,min,mean mean energy efficience %f, %f, %f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean()))
+                print('SAVED epoch: %d - max,min,mean mean energy efficience %f, %f, %f; lr=%f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean(), scheduler._last_lr[-1]))
                 pickle.dump({"sysModel": sysModel, "u": u.detach().cpu().numpy()}, open(filePath, "wb"))
             else:
-                print('epoch: %d - max,min,mean mean energy efficience %f, %f, %f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean()))
+                print('epoch: %d - max,min,mean mean energy efficience %f, %f, %f; lr=%f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean(), scheduler._last_lr[-1]))
 
             stopTime = time.time()
             print(f'last {displayEvery_n_epochs} epochs took {stopTime - startTime} sec')
             startTime = time.time()
+
+        if energyEfficience.mean() > lastEnergyEfficienceMean:
+            lastEnergyEfficienceMean = energyEfficience.mean()
+            lastSaveEpoch = epoch
 
         if epoch - lastSaveEpoch > nEpochsWithNoSaveThr:
             print(f'Stoping optimization due to {epoch - lastSaveEpoch} epochs with no improvement')
