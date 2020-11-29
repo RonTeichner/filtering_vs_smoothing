@@ -14,9 +14,12 @@ import time
 enableOptimization = False
 enableInvestigation = True
 np.random.seed(13)
-filePath = "./maximizeSmoothing1D.pt"
+filePath = "./maximizeFiltering1D.pt"
 
-optimizationMode = 'maximizeSmoothing' # {'maximizeFiltering', 'maximizeSmoothing'}
+enableInputNoise = True
+inputNoiseSNR = 15 # db
+inputNoiseSNRLin = np.power(10, inputNoiseSNR/10)
+optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing'}
 
 if enableOptimization:
     dim_x, dim_z = 1, 1
@@ -76,6 +79,16 @@ if enableOptimization:
         #print(f'starting epoch {epoch}')
         optimizer.zero_grad()
         pytorchEstimator.zero_grad()
+        '''
+        if enableInputNoise:
+            with torch.no_grad():
+                if optimizationMode == 'maximizeFiltering':
+                    noiseStd = torch.sqrt((1/inputNoiseSNRLin) * torch.pow(u[:-1], 2).mean()) # volt
+                elif optimizationMode == 'maximizeSmoothing':
+                    noiseStd = torch.sqrt((1 / inputNoiseSNRLin) * torch.pow(u, 2).mean())  # volt
+                #u = torch.add(u, noiseStd*torch.randn_like(u))
+                u.add_(noiseStd*torch.randn_like(u))
+        '''
         z = torch.matmul(H_transpose, u)
         x_est_f, x_est_s = pytorchEstimator(z, filterStateInit)
 
@@ -84,8 +97,8 @@ if enableOptimization:
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
             meanInputEnergy = calcTimeSeriesMeanEnergy(u[:-1])  # mean energy at every batch [volt]
             inputEnergy = torch.sum(torch.pow(u[:-1], 2), dim=2)
-            #loss = torch.mean(F.relu(meanInputEnergy-meanRootInputEnergyThr) - filteringMeanEnergy)
-            loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - filteringMeanEnergy)
+            loss = torch.mean(F.relu(meanInputEnergy-meanRootInputEnergyThr) - filteringMeanEnergy)
+            #loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - filteringMeanEnergy)
         elif optimizationMode == 'maximizeSmoothing':
             filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
