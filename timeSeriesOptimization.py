@@ -11,17 +11,17 @@ import torch.optim as optim
 import pickle
 import time
 
-enableOptimization = True
+enableOptimization = False
 enableInvestigation = True
+np.random.seed(13)
 filePath = "./maximizeFiltering1D.pt"
 
 optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing'}
 
 if enableOptimization:
-    #np.random.seed(11)
     dim_x, dim_z = 1, 1
     N = 1000  # time steps
-    batchSize = 32
+    batchSize = 64
     useCuda = False
 
     # estimator init values:
@@ -51,26 +51,28 @@ if enableOptimization:
         pytorchEstimator = pytorchEstimator.cuda()
     pytorchEstimator.eval()
     # create input time-series:
-    u = torch.randn((N, batchSize, dim_x, 1), dtype=torch.float)
+    u = torch.cat((torch.randn((N, int(batchSize/2), dim_x, 1), dtype=torch.float), 2*torch.rand((N, int(batchSize/2), dim_x, 1), dtype=torch.float)-1), dim=1)
     if useCuda:
         u = u.cuda()
     #model = time_series_model(N, batchSize, dim_x)
 
     # perform an optimization:
 
-    #optimizer = optim.SGD([u.requires_grad_()], lr=0.001)
+    #optimizer = optim.SGD([u.requires_grad_()], lr=1, momentum=0.9)
     #optimizer = optim.Adadelta([u.requires_grad_()])
-    optimizer = optim.Adam([u.requires_grad_()], lr=0.01)
+    optimizer = optim.Adam([u.requires_grad_()], lr=1)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=100, threshold=1e-6)
     meanRootInputEnergyThr = 1 # |volt|
 
-    uMeanNormList, uHighestNorm, uMeanNorm, epochIndex, zHighestNorm, zMeanNorm, filteringEnergyList, filteringEnergyEfficienceList, smoothingEnergyList, smoothingEnergyEfficienceList = list(), list(), list(), list(), list(), list(), list(), list(), list(), list()
+    #uMeanNormList, uHighestNorm, uMeanNorm, epochIndex, zHighestNorm, zMeanNorm, filteringEnergyList, filteringEnergyEfficienceList, smoothingEnergyList, smoothingEnergyEfficienceList = list(), list(), list(), list(), list(), list(), list(), list(), list(), list()
     epoch = -1
     displayEvery_n_epochs = 100
     startTime = time.time()
-    maxFilterEnergyEfficience = 0
+    maxEnergyEfficience, lastSaveEpoch = 0, 0
+    nEpochsWithNoSaveThr = 1000
     while True:
         epoch += 1
-        uMeanNormList.append(np.linalg.norm(u.detach().cpu().numpy(), axis=2).mean(axis=0))
+        #uMeanNormList.append(np.linalg.norm(u.detach().cpu().numpy(), axis=2).mean(axis=0))
         #print(f'starting epoch {epoch}')
         optimizer.zero_grad()
         pytorchEstimator.zero_grad()
@@ -91,56 +93,44 @@ if enableOptimization:
         # loss.is_contiguous()
         loss.backward()
         optimizer.step()  # parameter update
-        '''
-        if np.mod(epoch, displayEvery_n_epochs) == 0:
-            stopTime = time.time()
-            print(f'epoch {epoch}; last {displayEvery_n_epochs} epochs took {stopTime - startTime} sec')
-            startTime = time.time()
-        '''
-        filteringEnergyList.append(filteringMeanEnergy)
-        filteringEnergyEfficienceList.append(np.divide(filteringMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy()))
 
-        smoothingEnergyList.append(smoothingMeanEnergy)
-        smoothingEnergyEfficienceList.append(np.divide(smoothingMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy()))
+        if optimizationMode == 'maximizeFiltering':
+            energyEfficience = np.divide(filteringMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
+        elif optimizationMode == 'maximizeSmoothing':
+            energyEfficience = np.divide(smoothingMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
 
+        scheduler.step(energyEfficience.mean())
 
         if np.mod(epoch, displayEvery_n_epochs) == 0:
-            uHighestNorm.append(np.linalg.norm(u.detach().cpu().numpy()[:-1], axis=2).max())
-            uMeanNorm.append(np.linalg.norm(u.detach().cpu().numpy()[:-1], axis=2).mean())
-            zHighestNorm.append(np.linalg.norm(torch.matmul(H_transpose, u).detach().cpu().numpy()[:-1], axis=2).max())
-            zMeanNorm.append(np.linalg.norm(torch.matmul(H_transpose, u).detach().cpu().numpy()[:-1], axis=2).mean())
-            epochIndex.append(epoch)
-            if optimizationMode == 'maximizeFiltering':
-                print('epoch: %d - max,min,mean mean filtering energy efficience %f, %f, %f' % (epoch, filteringEnergyEfficienceList[-1].max(), filteringEnergyEfficienceList[-1].min(), filteringEnergyEfficienceList[-1].mean()))
-            elif optimizationMode == 'maximizeSmoothing':
-                print('epoch: %d - max,min,mean mean smoothing energy efficience %f, %f, %f' % (epoch, smoothingEnergyEfficienceList[-1].max(), smoothingEnergyEfficienceList[-1].min(), smoothingEnergyEfficienceList[-1].mean()))
+            if energyEfficience.max() > maxEnergyEfficience:
+                lastSaveEpoch = epoch
+                maxEnergyEfficience = energyEfficience.max()
+                print('SAVED epoch: %d - max,min,mean mean energy efficience %f, %f, %f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean()))
+                pickle.dump({"sysModel": sysModel, "u": u.detach().cpu().numpy()}, open(filePath, "wb"))
+            else:
+                print('epoch: %d - max,min,mean mean energy efficience %f, %f, %f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean()))
 
             stopTime = time.time()
             print(f'last {displayEvery_n_epochs} epochs took {stopTime - startTime} sec')
             startTime = time.time()
 
-            if optimizationMode == 'maximizeFiltering':
-                if filteringEnergyEfficienceList[-1].max() > maxFilterEnergyEfficience:
-                    maxFilterEnergyEfficience = filteringEnergyEfficienceList[-1].max()
-                    print('SAVED epoch: %d - max,min,mean mean filtering energy efficience %f, %f, %f' % (epoch, filteringEnergyEfficienceList[-1].max(), filteringEnergyEfficienceList[-1].min(), filteringEnergyEfficienceList[-1].mean()))
-                    pickle.dump({"sysModel": sysModel, "u": u.detach().cpu().numpy(), "uMeanNormList": uMeanNormList, "filteringEnergyEfficienceList": filteringEnergyEfficienceList}, open(filePath, "wb"))
-            elif optimizationMode == 'maximizeSmoothing':
-                if smoothingEnergyEfficienceList[-1].max() > maxFilterEnergyEfficience:
-                    maxFilterEnergyEfficience = smoothingEnergyEfficienceList[-1].max()
-                    print('SAVED epoch: %d - max,min,mean mean smoothing energy efficience %f, %f, %f' % (epoch, smoothingEnergyEfficienceList[-1].max(), smoothingEnergyEfficienceList[-1].min(), smoothingEnergyEfficienceList[-1].mean()))
-                    pickle.dump({"sysModel": sysModel, "u": u.detach().cpu().numpy(), "uMeanNormList": uMeanNormList, "smoothingEnergyEfficienceList": smoothingEnergyEfficienceList}, open(filePath, "wb"))
-        
+        if epoch - lastSaveEpoch > nEpochsWithNoSaveThr:
+            print(f'Stoping optimization due to {epoch - lastSaveEpoch} epochs with no improvement')
+            break
+
 
 if enableInvestigation:
     model_results = pickle.load(open(filePath, "rb"))
     sysModel = model_results["sysModel"]
     u = model_results["u"]
     z = np.matmul(np.transpose(sysModel["H"]), u)
-    uMeanNorms = np.array(model_results["uMeanNormList"])
-    if optimizationMode == 'maximizeFiltering':
-        filteringEnergyEfficience = np.array(model_results["filteringEnergyEfficienceList"])
-    elif optimizationMode == 'maximizeSmoothing':
-        smoothingEnergyEfficience = np.array(model_results["smoothingEnergyEfficienceList"])
+
+    theoreticalBarSigma = solve_discrete_are(a=np.transpose(sysModel["F"]), b=sysModel["H"], q=sysModel["Q"], r=sysModel["R"])
+    Ka_0 = np.dot(theoreticalBarSigma, np.dot(sysModel["H"], np.linalg.inv(np.dot(np.transpose(sysModel["H"]), np.dot(theoreticalBarSigma, sysModel["H"])) + sysModel["R"])))  # first smoothing gain
+    K = np.dot(sysModel["F"], Ka_0)  # steadyKalmanGain
+    tildeF = sysModel["F"] - np.dot(K, np.transpose(sysModel["H"]))
+    print(f'F = {sysModel["F"]}; H = {sysModel["H"]}; Q = {sysModel["Q"]}; R = {sysModel["R"]}')
+    print((f'tildeF = {tildeF}; KH\' = {np.multiply(K, np.transpose(sysModel["H"]))}'))
 
     batchSize, dim_x = u.shape[1], sysModel["F"].shape[0]
     # run Anderson's filter & smoother:
@@ -151,94 +141,100 @@ if enableInvestigation:
     # x_est_f[k] has the estimation of x[k] given z[0:k-1]
     # x_est_s[k] has the estimation of x[k] given z[0:N-1]
     if optimizationMode == 'maximizeFiltering':
-        filteringMeanPowerPerBatch = np.power(x_est_f[1:], 2).sum(axis=2).mean(axis=0)
+        objectiveMeanPowerPerBatch = np.power(x_est_f[1:], 2).sum(axis=2).mean(axis=0)
         inputMeanPowerPerBatch = np.power(u[:-1], 2).sum(axis=2).mean(axis=0)
-        filteringPowerEfficiencyPerBatch = np.divide(filteringMeanPowerPerBatch, inputMeanPowerPerBatch)
-        filteringPowerEfficiencyPerBatch_sortedIndexes = np.argsort(filteringPowerEfficiencyPerBatch, axis=0)
     elif optimizationMode == 'maximizeSmoothing':
-        smoothingMeanPowerPerBatch = np.power(x_est_s, 2).sum(axis=2).mean(axis=0)
+        objectiveMeanPowerPerBatch = np.power(x_est_s, 2).sum(axis=2).mean(axis=0)
         inputMeanPowerPerBatch = np.power(u, 2).sum(axis=2).mean(axis=0)
-        smoothingPowerEfficiencyPerBatch = np.divide(smoothingMeanPowerPerBatch, inputMeanPowerPerBatch)
-        smoothingPowerEfficiencyPerBatch_sortedIndexes = np.argsort(smoothingPowerEfficiencyPerBatch, axis=0)
+
+    objectivePowerEfficiencyPerBatch = np.divide(objectiveMeanPowerPerBatch, inputMeanPowerPerBatch)
+    objectivePowerEfficiencyPerBatch_sortedIndexes = np.argsort(objectivePowerEfficiencyPerBatch, axis=0)
+
+    maxObjectivePowerEfficiencyIndex = objectivePowerEfficiencyPerBatch_sortedIndexes[-1, 0]
+    plt.figure()
+    plt.title(r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
+    plt.subplots_adjust(top=0.8)
+    u_norm = np.linalg.norm(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
+    if dim_x > 1:
+        plt.plot(u_norm, label=r'${||u||}_2$')
+    else:
+        plt.plot(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$u$')
+
+    x_est_norm = np.linalg.norm(x_est_f[1:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
+    if dim_x > 1:
+        plt.plot(x_est_norm, label=r'${||\hat{x}_{k \mid k-1}||}_2$')
+    else:
+        plt.plot(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\hat{x}_{k \mid k-1}$')
+
+    plt.xlabel('k')
+    plt.grid()
+    plt.legend()
 
     for pIdx in range(4):
-        if optimizationMode == 'maximizeFiltering':
-            maxFilteringPowerEfficiencyIndex = np.argmax(filteringPowerEfficiencyPerBatch[-1-pIdx])
-        elif optimizationMode == 'maximizeSmoothing':
-            maxFilteringPowerEfficiencyIndex = np.argmax(smoothingPowerEfficiencyPerBatch[-1 - pIdx])
+        maxObjectivePowerEfficiencyIndex = objectivePowerEfficiencyPerBatch_sortedIndexes[-1-pIdx, 0]
 
-        plt.subplots(nrows=2, ncols=1)
-        plt.subplot(2, 1, 1)
-        plt.plot(watt2dbm(np.power(uMeanNorms[:, maxFilteringPowerEfficiencyIndex, 0], 2)), label=r'$\frac{1}{N} \sum_{k} {||x^u_k||}_2^2$')
-        plt.xlabel('epochs')
-        plt.ylabel('dbm')
-        plt.grid()
-        plt.legend()
-
-        plt.subplot(2, 1, 2)
-        if optimizationMode == 'maximizeFiltering':
-            plt.plot(watt2db(filteringEnergyEfficience[:, maxFilteringPowerEfficiencyIndex, 0]), label=r'$\frac{\sum_{k=1}^{N-1} {||\xi_k||}_2^2}{\sum_{k=0}^{N-2} {||x^u_k||}_2^2}$')
-        elif optimizationMode == 'maximizeSmoothing':
-            plt.plot(watt2db(smoothingEnergyEfficience[:, maxFilteringPowerEfficiencyIndex, 0]), label=r'$\frac{\sum_{k=0}^{N-1} {||\xi^s_k||}_2^2}{\sum_{k=0}^{N-1} {||x^u_k||}_2^2}$')
-        plt.xlabel('epochs')
-        plt.ylabel('db')
-        plt.grid()
-        plt.legend()
-
-        plt.subplots_adjust(hspace=1)
-
-        enablePlots = False
-        if enablePlots:
+        enableSubPlots = False
+        if enableSubPlots:
             plt.subplots(nrows=3, ncols=1)
         else:
             plt.figure()
+            plt.title(r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
+            plt.subplots_adjust(top=0.8)
 
-        if enablePlots: plt.subplot(4, 1, 1)
-        u_norm = np.linalg.norm(u[:-1, maxFilteringPowerEfficiencyIndex, :, 0], axis=1)
+        if enableSubPlots: plt.subplot(4, 1, 1)
+        u_norm = np.linalg.norm(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
             plt.plot(u_norm, label=r'${||u||}_2$')
         else:
-            plt.plot(u[:-1, maxFilteringPowerEfficiencyIndex, :, 0], label=r'$u$')
-        if enablePlots:
+            plt.plot(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$u$')
+        if enableSubPlots:
             plt.title(r'$\frac{1}{N}\sum_{k} {||x^u_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(u_norm, 2).mean())))
             plt.grid()
             plt.legend()
 
-        if enablePlots: plt.subplot(4, 1, 2)
-        z_norm = np.linalg.norm(z[:-1, maxFilteringPowerEfficiencyIndex, :, 0], axis=1)
+        if enableSubPlots: plt.subplot(4, 1, 2)
+        z_norm = np.linalg.norm(z[:-1, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
             plt.plot(z_norm, label=r'${||z||}_2$')
         else:
-            plt.plot(z[:-1, maxFilteringPowerEfficiencyIndex, :, 0], label=r'$z$')
-        if enablePlots:
+            plt.plot(z[:-1, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$z$')
+        if enableSubPlots:
             plt.title(r'$\frac{1}{N}\sum_{k} {||H^{T} x^u_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(z_norm, 2).mean())))
             plt.grid()
             plt.legend()
 
-        if enablePlots: plt.subplot(4, 1, 3)
-        x_est_norm = np.linalg.norm(x_est_f[1:, maxFilteringPowerEfficiencyIndex, :, 0], axis=1)
+        if enableSubPlots: plt.subplot(4, 1, 3)
+        x_est_norm = np.linalg.norm(x_est_f[1:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
             plt.plot(x_est_norm, label=r'${||\hat{x}_{k \mid k-1}||}_2$')
         else:
-            plt.plot(x_est_f[:, maxFilteringPowerEfficiencyIndex, :, 0], label=r'$\hat{x}_{k \mid k-1}$')
-        if enablePlots:
+            plt.plot(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\hat{x}_{k \mid k-1}$')
+        if enableSubPlots:
             plt.title(r'$\frac{1}{N}\sum_{k} {||\xi_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(x_est_norm, 2).mean())))
             plt.grid()
             plt.legend()
 
 
-        if enablePlots: plt.subplot(4, 1, 4)
+        if enableSubPlots: plt.subplot(4, 1, 4)
 
-        x_est_norm = np.linalg.norm(x_est_s[:, maxFilteringPowerEfficiencyIndex, :, 0], axis=1)
+        x_est_norm = np.linalg.norm(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
             plt.plot(x_est_norm, label=r'${||\hat{x}_{k \mid N-1}||}_2$')
         else:
-            plt.plot(x_est_s[:, maxFilteringPowerEfficiencyIndex, :, 0], label=r'$\hat{x}_{k \mid N-1}$')
-        if enablePlots:
+            plt.plot(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\hat{x}_{k \mid N-1}$')
+        if enableSubPlots:
             plt.title(r'$\frac{1}{N}\sum_{k} {||\xi^s_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(x_est_norm, 2).mean())))
+
+        if not enableSubPlots:
+            bar_z = z[:, maxObjectivePowerEfficiencyIndex] - np.matmul(np.transpose(sysModel["H"]), x_est_f[:, maxObjectivePowerEfficiencyIndex])
+            norm_bar_z = np.linalg.norm(bar_z, axis=1)
+            if dim_x > 1:
+                plt.plot(norm_bar_z, label=r'$||\bar{z}||_2^2$')
+            else:
+                plt.plot(bar_z[:,0,0], label=r'$\bar{z}$')
 
         plt.grid()
         plt.legend()
 
-        if enablePlots: plt.subplots_adjust(hspace=1)
+        if enableSubPlots: plt.subplots_adjust(hspace=1)
     plt.show()
