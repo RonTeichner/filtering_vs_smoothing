@@ -11,10 +11,10 @@ import torch.optim as optim
 import pickle
 import time
 
-enableOptimization = False
+enableOptimization = True
 enableInvestigation = True
 np.random.seed(13)
-filePath = "./maximizeSmoothing1D.pt"
+filePath = "./maximizeSmoothing1D_perSample.pt"
 
 optimizationMode = 'maximizeSmoothing' # {'maximizeFiltering', 'maximizeSmoothing'}
 
@@ -90,7 +90,9 @@ if enableOptimization:
             filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
             meanInputEnergy = calcTimeSeriesMeanEnergy(u)  # mean energy at every batch [volt]
-            loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) - smoothingMeanEnergy)
+            inputEnergy = torch.sum(torch.pow(u, 2), dim=2)
+            #loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) - smoothingMeanEnergy)
+            loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - smoothingMeanEnergy)
 
         # loss.is_contiguous()
         loss.backward()
