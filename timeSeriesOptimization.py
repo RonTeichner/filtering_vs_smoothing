@@ -11,12 +11,12 @@ import torch.optim as optim
 import pickle
 import time
 
-enableOptimization = True
+enableOptimization = False
 enableInvestigation = True
 np.random.seed(13)
-filePath = "./maximizeFiltering1D.pt"
+filePath = "./maximizeSmoothing1D.pt"
 
-optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing'}
+optimizationMode = 'maximizeSmoothing' # {'maximizeFiltering', 'maximizeSmoothing'}
 
 if enableOptimization:
     dim_x, dim_z = 1, 1
@@ -157,19 +157,34 @@ if enableInvestigation:
 
     maxObjectivePowerEfficiencyIndex = objectivePowerEfficiencyPerBatch_sortedIndexes[-1, 0]
     plt.figure()
-    plt.title(r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
-    plt.subplots_adjust(top=0.8)
-    u_norm = np.linalg.norm(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
-    if dim_x > 1:
-        plt.plot(u_norm, label=r'${||u||}_2$')
-    else:
-        plt.plot(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$u$')
+    if optimizationMode == 'maximizeFiltering':
+        plt.title(r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
+        plt.subplots_adjust(top=0.8)
+        u_norm = np.linalg.norm(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
+        if dim_x > 1:
+            plt.plot(u_norm, label=r'${||x^u_k||}_2$')
+        else:
+            plt.plot(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$x^u_k$')
 
-    x_est_norm = np.linalg.norm(x_est_f[1:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
-    if dim_x > 1:
-        plt.plot(x_est_norm, label=r'${||\hat{x}_{k \mid k-1}||}_2$')
-    else:
-        plt.plot(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\hat{x}_{k \mid k-1}$')
+        x_est_norm = np.linalg.norm(x_est_f[1:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
+        if dim_x > 1:
+            plt.plot(x_est_norm, label=r'${||\xi_{k \mid k-1}||}_2$')
+        else:
+            plt.plot(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\xi_{k \mid k-1}$')
+    elif optimizationMode == 'maximizeSmoothing':
+        plt.title(r'$\frac{\sum_{k=0}^{N-1} ||\xi^s_k||_2^2}{\sum_{k=0}^{N-1} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
+        plt.subplots_adjust(top=0.8)
+        u_norm = np.linalg.norm(u[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
+        if dim_x > 1:
+            plt.plot(u_norm, label=r'${||x^u_k||}_2$')
+        else:
+            plt.plot(u[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$x^u_k$')
+
+        x_est_norm = np.linalg.norm(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
+        if dim_x > 1:
+            plt.plot(x_est_norm, label=r'${||\xi^s_{k \mid N-1}||}_2$')
+        else:
+            plt.plot(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\xi^s_{k \mid N-1}$')
 
     plt.xlabel('k')
     plt.grid()
@@ -183,7 +198,10 @@ if enableInvestigation:
             plt.subplots(nrows=3, ncols=1)
         else:
             plt.figure()
-            plt.title(r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
+            if optimizationMode == 'maximizeFiltering':
+                plt.title(r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
+            elif optimizationMode == 'maximizeSmoothing':
+                plt.title(r'$\frac{\sum_{k=0}^{N-1} ||\xi^s_k||_2^2}{\sum_{k=0}^{N-1} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
             plt.subplots_adjust(top=0.8)
 
         if enableSubPlots: plt.subplot(4, 1, 1)
