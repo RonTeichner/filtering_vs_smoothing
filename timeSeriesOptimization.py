@@ -11,7 +11,7 @@ import torch.optim as optim
 import pickle
 import time
 
-enableOptimization = True
+enableOptimization = False
 enableInvestigation = True
 np.random.seed(13)
 filePath = "./maximizeFiltering1D.pt"
@@ -128,6 +128,9 @@ if enableInvestigation:
     model_results = pickle.load(open(filePath, "rb"))
     sysModel = model_results["sysModel"]
     u = model_results["u"]
+    # insert a guessed solution:
+    u[:, 0, 0, 0] = np.ones_like(u[:, 0, 0, 0])
+    
     z = np.matmul(np.transpose(sysModel["H"]), u)
 
     theoreticalBarSigma = solve_discrete_are(a=np.transpose(sysModel["F"]), b=sysModel["H"], q=sysModel["Q"], r=sysModel["R"])
