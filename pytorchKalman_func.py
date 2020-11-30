@@ -144,7 +144,12 @@ class Pytorch_filter_smoother_Obj(nn.Module):
 
         smootherRecursiveGain = np.matmul(theoreticalBarSigma, np.matmul(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma)))
         smootherGain = np.linalg.inv(F) - smootherRecursiveGain
-
+        '''
+        print(f'The eigenvalues of tildeF: {np.linalg.eig(tildeF)[0]}')
+        print(f'The eigenvalues of KH\': {np.linalg.eig(np.matmul(K, np.transpose(H)))[0]}')
+        print(f'The eigenvalues of smootherRecursiveGain: {np.linalg.eig(smootherRecursiveGain)[0]}')
+        print(f'The eigenvalues of smootherGain: {np.linalg.eig(smootherGain)[0]}')
+        '''
         # stuff to cuda:
         if self.useCuda:
             self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous().cuda()

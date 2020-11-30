@@ -15,16 +15,11 @@ enableOptimization = False
 enableInvestigation = True
 np.random.seed(13)
 
-filePath = "./minimizingSmoothingImprovement1D_perSampleConstrain.pt"
-
-
-enableInputNoise = True
-inputNoiseSNR = 15 # db
-inputNoiseSNRLin = np.power(10, inputNoiseSNR/10)
-optimizationMode = 'minimizingSmoothingImprovement' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
+filePath = "./maximizingFiltering2D_perSampleConstrain.pt"
+optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
 
 if enableOptimization:
-    dim_x, dim_z = 1, 1
+    dim_x, dim_z = 2, 2
     N = 1000  # time steps
     batchSize = 64
     useCuda = False
@@ -99,8 +94,8 @@ if enableOptimization:
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
             meanInputEnergy = calcTimeSeriesMeanEnergy(u[:-1])  # mean energy at every batch [volt]
             inputEnergy = torch.sum(torch.pow(u[:-1], 2), dim=2)
-            loss = torch.mean(F.relu(meanInputEnergy-meanRootInputEnergyThr) - filteringMeanEnergy)
-            #loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - filteringMeanEnergy)
+            #loss = torch.mean(F.relu(meanInputEnergy-meanRootInputEnergyThr) - filteringMeanEnergy)
+            loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - filteringMeanEnergy)
         elif optimizationMode == 'maximizeSmoothing':
             filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
@@ -231,6 +226,16 @@ if enableInvestigation:
     plt.grid()
     plt.legend()
 
+    # plot the angles of u:
+    if dim_x == 2:
+        plt.figure()
+        uVec = u[:-1, maxObjectivePowerEfficiencyIndex, :, 0]
+        uAngles = 180/np.pi * np.arctan(np.divide(uVec[:, 1], uVec[:, 0])) # deg
+        plt.plot(uAngles, label=r'$\angle x^u_k$')
+        plt.xlabel('k')
+        plt.grid()
+        plt.legend()
+
     for pIdx in range(4):
         maxObjectivePowerEfficiencyIndex = objectivePowerEfficiencyPerBatch_sortedIndexes[-1-pIdx, 0]
 
@@ -293,7 +298,7 @@ if enableInvestigation:
             bar_z = z[:, maxObjectivePowerEfficiencyIndex] - np.matmul(np.transpose(sysModel["H"]), x_est_f[:, maxObjectivePowerEfficiencyIndex])
             norm_bar_z = np.linalg.norm(bar_z, axis=1)
             if dim_x > 1:
-                plt.plot(norm_bar_z, label=r'$||\bar{z}||_2^2$')
+                plt.plot(norm_bar_z, label=r'$||\bar{z}||_2$')
             else:
                 plt.plot(bar_z[:,0,0], label=r'$\bar{z}$')
 
