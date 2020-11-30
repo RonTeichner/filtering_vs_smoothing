@@ -14,6 +14,7 @@ import time
 enableOptimization = False
 enableInvestigation = True
 np.random.seed(13)
+enableOnlyAngleOptimization = True
 
 filePath = "./maximizingFiltering2D_perSampleConstrain.pt"
 optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
@@ -23,6 +24,8 @@ if enableOptimization:
     N = 1000  # time steps
     batchSize = 64
     useCuda = False
+
+    assert enableOnlyAngleOptimization and (dim_x == 2) or not(enableOnlyAngleOptimization)
 
     # estimator init values:
     filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
@@ -35,6 +38,7 @@ if enableOptimization:
 
     # create a single system model:
     sysModel = GenSysModel(dim_x, dim_z)
+    print(f'F = {sysModel["F"]}; H = {sysModel["H"]}; Q = {sysModel["Q"]}; R = {sysModel["R"]}')
     H = torch.tensor(sysModel["H"], dtype=torch.float, requires_grad=False)
     H_transpose = torch.transpose(H, 1, 0)
     H_transpose = H_transpose.contiguous()
@@ -51,16 +55,29 @@ if enableOptimization:
         pytorchEstimator = pytorchEstimator.cuda()
     pytorchEstimator.eval()
     # create input time-series:
-    u = torch.cat((torch.randn((N, int(batchSize/2), dim_x, 1), dtype=torch.float), 2*torch.rand((N, int(batchSize/2), dim_x, 1), dtype=torch.float)-1), dim=1)
+    if enableOnlyAngleOptimization:
+        uAngle = 2*np.pi*torch.rand((N, batchSize, 1, 1), dtype=torch.float)
+        #uAngle = np.pi/2 + -np.pi/8 + np.pi/4*torch.rand((N, batchSize, 1, 1), dtype=torch.float)
+        #uAngle = -12.4164/180*np.pi + - np.pi/360 + np.pi/180 * torch.rand((N, batchSize, 1, 1), dtype=torch.float)
+    else:
+        u = torch.cat((torch.randn((N, int(batchSize/2), dim_x, 1), dtype=torch.float), 2*torch.rand((N, int(batchSize/2), dim_x, 1), dtype=torch.float)-1), dim=1)
+
     if useCuda:
-        u = u.cuda()
+        if enableOnlyAngleOptimization:
+            uAngle = uAngle.cuda()
+        else:
+            u = u.cuda()
     #model = time_series_model(N, batchSize, dim_x)
 
     # perform an optimization:
 
     #optimizer = optim.SGD([u.requires_grad_()], lr=1, momentum=0.9)
     #optimizer = optim.Adadelta([u.requires_grad_()])
-    optimizer = optim.Adam([u.requires_grad_()], lr=1)
+    if enableOnlyAngleOptimization:
+        optimizer = optim.Adam([uAngle.requires_grad_()], lr=0.1)
+    else:
+        optimizer = optim.Adam([u.requires_grad_()], lr=1)
+
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=100, threshold=1e-6)
     meanRootInputEnergyThr = 1 # |volt|
 
@@ -86,7 +103,11 @@ if enableOptimization:
                 #u = torch.add(u, noiseStd*torch.randn_like(u))
                 u.add_(noiseStd*torch.randn_like(u))
         '''
-        z = torch.matmul(H_transpose, u)
+        if enableOnlyAngleOptimization:
+            u = torch.cat((torch.cos(uAngle), torch.sin(uAngle)), dim=2)
+            z = torch.matmul(H_transpose, u)
+        else:
+            z = torch.matmul(H_transpose, u)
         x_est_f, x_est_s = pytorchEstimator(z, filterStateInit)
 
         if optimizationMode == 'maximizeFiltering':
@@ -180,7 +201,12 @@ if enableInvestigation:
     objectivePowerEfficiencyPerBatch_sortedIndexes = np.argsort(objectivePowerEfficiencyPerBatch, axis=0)
 
     maxObjectivePowerEfficiencyIndex = objectivePowerEfficiencyPerBatch_sortedIndexes[-1, 0]
-    plt.figure()
+
+    if dim_x == 2:
+        plt.figure(figsize=(12, 4))
+        plt.subplot(1, 2, 1)
+    else:
+        plt.figure()
     if optimizationMode == 'maximizeFiltering':
         plt.title(r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
         plt.subplots_adjust(top=0.8)
@@ -228,7 +254,7 @@ if enableInvestigation:
 
     # plot the angles of u:
     if dim_x == 2:
-        plt.figure()
+        plt.subplot(1, 2, 2)
         uVec = u[:-1, maxObjectivePowerEfficiencyIndex, :, 0]
         uAngles = 180/np.pi * np.arctan(np.divide(uVec[:, 1], uVec[:, 0])) # deg
         plt.plot(uAngles, label=r'$\angle x^u_k$')
