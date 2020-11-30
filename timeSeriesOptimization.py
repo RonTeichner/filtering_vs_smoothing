@@ -289,7 +289,7 @@ if enableInvestigation:
         if enableSubPlots: plt.subplot(4, 1, 1)
         u_norm = np.linalg.norm(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
-            plt.plot(u_norm, label=r'${||u||}_2$')
+            plt.plot(u_norm, label=r'${||x^u_k||}_2$')
         else:
             plt.plot(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$u$')
         if enableSubPlots:
@@ -311,9 +311,9 @@ if enableInvestigation:
         if enableSubPlots: plt.subplot(4, 1, 3)
         x_est_norm = np.linalg.norm(x_est_f[1:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
-            plt.plot(x_est_norm, label=r'${||\hat{x}_{k \mid k-1}||}_2$')
+            plt.plot(x_est_norm, label=r'${||\xi_{k}||}_2$')
         else:
-            plt.plot(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\hat{x}_{k \mid k-1}$')
+            plt.plot(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\xi_{k}$')
         if enableSubPlots:
             plt.title(r'$\frac{1}{N}\sum_{k} {||\xi_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(x_est_norm, 2).mean())))
             plt.grid()
@@ -324,9 +324,9 @@ if enableInvestigation:
 
         x_est_norm = np.linalg.norm(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
-            plt.plot(x_est_norm, label=r'${||\hat{x}_{k \mid N-1}||}_2$')
+            plt.plot(x_est_norm, label=r'${||\xi^s_{k}||}_2$')
         else:
-            plt.plot(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\hat{x}_{k \mid N-1}$')
+            plt.plot(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\xi^s_{k}$')
         if enableSubPlots:
             plt.title(r'$\frac{1}{N}\sum_{k} {||\xi^s_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(x_est_norm, 2).mean())))
 
