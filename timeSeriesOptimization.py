@@ -13,6 +13,7 @@ import time
 
 enableOptimization = False
 enableInvestigation = True
+enableConstantInputSearch = True
 np.random.seed(13)
 enableOnlyAngleOptimization = True
 
@@ -169,7 +170,10 @@ if enableOptimization:
 if enableInvestigation:
     model_results = pickle.load(open(filePath, "rb"))
     sysModel = model_results["sysModel"]
-    u = model_results["u"]
+    if enableConstantInputSearch:
+        u = constantMaximizeFilteringInputSearch(sysModel, 1000)
+    else:
+        u = model_results["u"]
     z = np.matmul(np.transpose(sysModel["H"]), u)
 
     theoreticalBarSigma = solve_discrete_are(a=np.transpose(sysModel["F"]), b=sysModel["H"], q=sysModel["Q"], r=sysModel["R"])
@@ -262,7 +266,7 @@ if enableInvestigation:
         plt.grid()
         plt.legend()
 
-    for pIdx in range(4):
+    for pIdx in range(min(4, objectivePowerEfficiencyPerBatch_sortedIndexes.shape[0])):
         maxObjectivePowerEfficiencyIndex = objectivePowerEfficiencyPerBatch_sortedIndexes[-1-pIdx, 0]
 
         enableSubPlots = False

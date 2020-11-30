@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 #from __future__ import print_function
 #from __future__ import division
+from analyticResults_func import watt2db, volt2dbm, watt2dbm
 
 
 def GenSysModel(dim_x, dim_z):
@@ -211,6 +212,35 @@ class Pytorch_filter_smoother_Obj(nn.Module):
 
         return hat_x_k_plus_1_given_k, hat_x_k_given_N
 
+def constantMaximizeFilteringInputSearch(sysModel, N):
+    dim_x = sysModel["F"].shape[0]
+    assert dim_x == 2
+    batchSize = 1
+    uAngles = np.linspace(-np.pi, np.pi, 360*10)
+    filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
+    filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.zeros((dim_x, 1)))
+    objectivePowerEfficiency = np.zeros(uAngles.shape[0])
+    for i,uAngle in enumerate(uAngles):
+        print(f'constantMaximizeFilteringInputSearch: {i/uAngles.shape[0]*100} %')
+        u = np.concatenate((np.cos(uAngle)*np.ones((N, 1, 1, 1)), np.sin(uAngle)*np.ones((N, 1, 1, 1))), axis=2)
+        z = np.matmul(np.transpose(sysModel["H"]), u)
+        x_est_f, x_est_s = Anderson_filter_smoother(z, sysModel, filter_P_init, filterStateInit)
+        objectiveMeanPowerPerBatch = np.power(x_est_f[1:], 2).sum(axis=2).mean(axis=0)
+        inputMeanPowerPerBatch = np.power(u[:-1], 2).sum(axis=2).mean(axis=0)
+        objectivePowerEfficiency[i] = np.divide(objectiveMeanPowerPerBatch, inputMeanPowerPerBatch)
+
+    optimalAngle = uAngles[np.argmax(objectivePowerEfficiency)]
+    uOptimal = np.concatenate((np.cos(optimalAngle)*np.ones((N, 1, 1, 1)), np.sin(optimalAngle)*np.ones((N, 1, 1, 1))), axis=2)
+
+    plt.figure()
+    plt.plot(uAngles/np.pi*180, watt2db(objectivePowerEfficiency), label=r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||x^u_k||_2^2}$')
+    plt.xlabel('deg')
+    plt.title('Filtering energy efficiency vs unit-input direction')
+    plt.ylabel('db')
+    plt.grid()
+    plt.legend()
+
+    return uOptimal
 
 def calcTimeSeriesMeanRootEnergy(x):
     return torch.mean(torch.norm(x, dim=2), dim=0)
