@@ -11,17 +11,17 @@ import torch.optim as optim
 import pickle
 import time
 
-enableOptimization = True
+enableOptimization = False
 enableInvestigation = True
 np.random.seed(13)
 
-filePath = "./maximizeSmoothing1D_perSample.pt"
+filePath = "./minimizingSmoothingImprovement1D.pt"
 
 
 enableInputNoise = True
 inputNoiseSNR = 15 # db
 inputNoiseSNRLin = np.power(10, inputNoiseSNR/10)
-optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing'}
+optimizationMode = 'minimizingSmoothingImprovement' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
 
 if enableOptimization:
     dim_x, dim_z = 1, 1
@@ -49,7 +49,7 @@ if enableOptimization:
     # craete pytorch estimator:
     if optimizationMode == 'maximizeFiltering':
         pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=False, useCuda=useCuda)
-    elif optimizationMode == 'maximizeSmoothing':
+    elif optimizationMode == 'maximizeSmoothing' or optimizationMode == 'minimizingSmoothingImprovement':
         pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
 
     if useCuda:
@@ -108,6 +108,11 @@ if enableOptimization:
             inputEnergy = torch.sum(torch.pow(u, 2), dim=2)
             #loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) - smoothingMeanEnergy)
             loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - smoothingMeanEnergy)
+        elif optimizationMode == 'minimizingSmoothingImprovement':
+            filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
+            smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
+            meanInputEnergy = calcTimeSeriesMeanEnergy(u)  # mean energy at every batch [volt]
+            loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) + (filteringMeanEnergy - smoothingMeanEnergy))
 
         # loss.is_contiguous()
         loss.backward()
@@ -117,6 +122,8 @@ if enableOptimization:
             energyEfficience = np.divide(filteringMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
         elif optimizationMode == 'maximizeSmoothing':
             energyEfficience = np.divide(smoothingMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
+        elif optimizationMode == 'minimizingSmoothingImprovement':
+            energyEfficience = np.divide(smoothingMeanEnergy.detach().cpu().numpy() - filteringMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
 
         scheduler.step(energyEfficience.mean())
 
@@ -168,6 +175,9 @@ if enableInvestigation:
     elif optimizationMode == 'maximizeSmoothing':
         objectiveMeanPowerPerBatch = np.power(x_est_s, 2).sum(axis=2).mean(axis=0)
         inputMeanPowerPerBatch = np.power(u, 2).sum(axis=2).mean(axis=0)
+    elif optimizationMode == 'minimizingSmoothingImprovement':
+        objectiveMeanPowerPerBatch = np.power(x_est_s, 2).sum(axis=2).mean(axis=0) - np.power(x_est_f, 2).sum(axis=2).mean(axis=0)
+        inputMeanPowerPerBatch = np.power(u, 2).sum(axis=2).mean(axis=0)
 
     objectivePowerEfficiencyPerBatch = np.divide(objectiveMeanPowerPerBatch, inputMeanPowerPerBatch)
     objectivePowerEfficiencyPerBatch_sortedIndexes = np.argsort(objectivePowerEfficiencyPerBatch, axis=0)
@@ -202,6 +212,18 @@ if enableInvestigation:
             plt.plot(x_est_norm, label=r'${||\xi^s_{k \mid N-1}||}_2$')
         else:
             plt.plot(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\xi^s_{k \mid N-1}$')
+
+    elif optimizationMode == 'minimizingSmoothingImprovement':
+        plt.title(r'$\frac{\sum_{k=0}^{N-1} ||\xi^s_k||_2^2 - ||\xi_k||_2^2}{\sum_{k=0}^{N-1} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
+        plt.subplots_adjust(top=0.8)
+        u_norm = np.linalg.norm(u[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
+        if dim_x > 1:
+            plt.plot(u_norm, label=r'${||x^u_k||}_2$')
+        else:
+            plt.plot(u[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$x^u_k$')
+
+        x_est_norm = np.power(np.linalg.norm(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1), 2) - np.power(np.linalg.norm(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1), 2)
+        plt.plot(x_est_norm, label=r'${||\xi^s_{k}||}_2^2 - ||\xi_{k \mid k-1}||}_2^2$')
 
     plt.xlabel('k')
     plt.grid()
