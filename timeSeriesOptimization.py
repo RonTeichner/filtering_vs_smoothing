@@ -15,7 +15,7 @@ enableOptimization = False
 enableInvestigation = True
 np.random.seed(13)
 
-filePath = "./minimizingSmoothingImprovement1D.pt"
+filePath = "./minimizingSmoothingImprovement1D_perSampleConstrain.pt"
 
 
 enableInputNoise = True
@@ -112,7 +112,9 @@ if enableOptimization:
             filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
             meanInputEnergy = calcTimeSeriesMeanEnergy(u)  # mean energy at every batch [volt]
-            loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) + (filteringMeanEnergy - smoothingMeanEnergy))
+            inputEnergy = torch.sum(torch.pow(u, 2), dim=2)
+            #loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) + (filteringMeanEnergy - smoothingMeanEnergy))
+            loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) + (filteringMeanEnergy - smoothingMeanEnergy))
 
         # loss.is_contiguous()
         loss.backward()
