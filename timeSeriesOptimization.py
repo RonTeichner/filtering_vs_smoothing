@@ -13,9 +13,9 @@ import time
 
 enableOptimization = False
 enableInvestigation = True
-enableConstantInputSearch = True
+enableConstantInputSearch = False
 np.random.seed(13)
-enableOnlyAngleOptimization = True
+enableOnlyAngleOptimization = False
 
 filePath = "./maximizingFiltering2D_perSampleConstrain.pt"
 optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
@@ -174,6 +174,11 @@ if enableInvestigation:
         u = constantMaximizeFilteringInputSearch(sysModel, 1000)
     else:
         u = model_results["u"]
+    N, batchSize, dim_x = u.shape[0], u.shape[1], sysModel["F"].shape[0]
+
+    max_u_norms = np.repeat(np.repeat(np.linalg.norm(u, axis=2).max(axis=0)[None, :, :, None], N, axis=0), dim_x, axis=2)
+    u = np.divide(u, max_u_norms)
+
     z = np.matmul(np.transpose(sysModel["H"]), u)
 
     theoreticalBarSigma = solve_discrete_are(a=np.transpose(sysModel["F"]), b=sysModel["H"], q=sysModel["Q"], r=sysModel["R"])
@@ -183,7 +188,7 @@ if enableInvestigation:
     print(f'F = {sysModel["F"]}; H = {sysModel["H"]}; Q = {sysModel["Q"]}; R = {sysModel["R"]}')
     print((f'tildeF = {tildeF}; KH\' = {np.multiply(K, np.transpose(sysModel["H"]))}'))
 
-    batchSize, dim_x = u.shape[1], sysModel["F"].shape[0]
+
     # run Anderson's filter & smoother:
     # estimator init values:
     filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
@@ -253,6 +258,7 @@ if enableInvestigation:
         plt.plot(x_est_norm, label=r'${||\xi^s_{k}||}_2^2 - ||\xi_{k \mid k-1}||}_2^2$')
 
     plt.xlabel('k')
+    plt.ylabel('deg')
     plt.grid()
     plt.legend()
 
