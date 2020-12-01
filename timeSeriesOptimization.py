@@ -11,7 +11,7 @@ import torch.optim as optim
 import pickle
 import time
 
-enableOptimization = False
+enableOptimization = True
 enableInvestigation = True
 enableConstantInputSearch = False
 np.random.seed(13)
@@ -23,7 +23,7 @@ optimizationMode = 'minimizingSmoothingImprovement' # {'maximizeFiltering', 'max
 if enableOptimization:
     dim_x, dim_z = 2, 2
     N = 1000  # time steps
-    batchSize = 64
+    batchSize = 256
     useCuda = False
 
     assert enableOnlyAngleOptimization and (dim_x == 2) or not(enableOnlyAngleOptimization)
@@ -355,7 +355,7 @@ if enableInvestigation:
 
             bar_zVec = bar_z
             bar_zAngles = 180 / np.pi * np.arctan(np.divide(bar_zVec[:, 1], bar_zVec[:, 0]))  # deg
-            plt.plot(bar_zAngles, label=r'$\angle x^u_k$')
+            plt.plot(bar_zAngles, label=r'$\angle \bar{z}_k$')
 
             plt.grid()
             plt.legend()
