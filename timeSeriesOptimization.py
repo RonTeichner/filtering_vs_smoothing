@@ -17,8 +17,8 @@ enableConstantInputSearch = False
 np.random.seed(13)
 enableOnlyAngleOptimization = False
 
-filePath = "./maximizingFiltering2D_perSampleConstrain.pt"
-optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
+filePath = "./minimizingSmoothingImprovement2D_perSampleConstrain.pt"
+optimizationMode = 'minimizingSmoothingImprovement' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
 
 if enableOptimization:
     dim_x, dim_z = 2, 2
@@ -79,7 +79,7 @@ if enableOptimization:
     else:
         optimizer = optim.Adam([u.requires_grad_()], lr=1)
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=100, threshold=1e-6)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=20, threshold=1e-6)
     meanRootInputEnergyThr = 1 # |volt|
 
     #uMeanNormList, uHighestNorm, uMeanNorm, epochIndex, zHighestNorm, zMeanNorm, filteringEnergyList, filteringEnergyEfficienceList, smoothingEnergyList, smoothingEnergyEfficienceList = list(), list(), list(), list(), list(), list(), list(), list(), list(), list()
@@ -88,6 +88,8 @@ if enableOptimization:
     startTime = time.time()
     maxEnergyEfficience, lastSaveEpoch, lastEnergyEfficienceMean = 0, 0, 0
     nEpochsWithNoSaveThr = 1000
+    saveThr = 1e-4
+    lowThrLr = 1e-6
     while True:
         epoch += 1
         #uMeanNormList.append(np.linalg.norm(u.detach().cpu().numpy(), axis=2).mean(axis=0))
@@ -144,7 +146,7 @@ if enableOptimization:
         elif optimizationMode == 'minimizingSmoothingImprovement':
             energyEfficience = np.divide(smoothingMeanEnergy.detach().cpu().numpy() - filteringMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
 
-        scheduler.step(energyEfficience.mean())
+        scheduler.step(energyEfficience.max())
 
         if np.mod(epoch, displayEvery_n_epochs) == 0:
             if energyEfficience.max() > maxEnergyEfficience:
@@ -157,6 +159,11 @@ if enableOptimization:
             stopTime = time.time()
             print(f'last {displayEvery_n_epochs} epochs took {stopTime - startTime} sec')
             startTime = time.time()
+        else:
+            if energyEfficience.max() > maxEnergyEfficience + saveThr:
+                maxEnergyEfficience = energyEfficience.max()
+                print('SAVED epoch: %d - max,min,mean mean energy efficience %f, %f, %f; lr=%f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean(), scheduler._last_lr[-1]))
+                pickle.dump({"sysModel": sysModel, "u": u.detach().cpu().numpy()}, open(filePath, "wb"))
 
         if energyEfficience.mean() > lastEnergyEfficienceMean:
             lastEnergyEfficienceMean = energyEfficience.mean()
@@ -164,6 +171,10 @@ if enableOptimization:
 
         if epoch - lastSaveEpoch > nEpochsWithNoSaveThr:
             print(f'Stoping optimization due to {epoch - lastSaveEpoch} epochs with no improvement')
+            break
+
+        if scheduler._last_lr[-1] < lowThrLr:
+            print(f'Stoping optimization due to learning rate of {scheduler._last_lr[-1]}')
             break
 
 
@@ -193,7 +204,13 @@ if enableInvestigation:
     # estimator init values:
     filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
     filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.zeros((dim_x, 1)))
-    x_est_f, x_est_s = Anderson_filter_smoother(z, sysModel, filter_P_init, filterStateInit)
+    #x_est_f, x_est_s = Anderson_filter_smoother(z, sysModel, filter_P_init, filterStateInit)
+
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=False)
+    x_est_f, x_est_s = pytorchEstimator(torch.tensor(z, dtype=torch.float), torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False))
+    x_est_f = x_est_f.detach().cpu().numpy()
+    x_est_s = x_est_s.detach().cpu().numpy()
+
     # x_est_f[k] has the estimation of x[k] given z[0:k-1]
     # x_est_s[k] has the estimation of x[k] given z[0:N-1]
     if optimizationMode == 'maximizeFiltering':
@@ -250,15 +267,14 @@ if enableInvestigation:
         plt.subplots_adjust(top=0.8)
         u_norm = np.linalg.norm(u[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
-            plt.plot(u_norm, label=r'${||x^u_k||}_2$')
+            plt.plot(np.power(u_norm, 2), label=r'${||x^u_k||}_2^2$')
         else:
             plt.plot(u[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$x^u_k$')
 
         x_est_norm = np.power(np.linalg.norm(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1), 2) - np.power(np.linalg.norm(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1), 2)
-        plt.plot(x_est_norm, label=r'${||\xi^s_{k}||}_2^2 - ||\xi_{k \mid k-1}||}_2^2$')
+        plt.plot(x_est_norm, label=r'${||\xi^s_{k}||}_2^2 - {||\xi_{k}||}_2^2$')
 
     plt.xlabel('k')
-    plt.ylabel('deg')
     plt.grid()
     plt.legend()
 
@@ -269,77 +285,84 @@ if enableInvestigation:
         uAngles = 180/np.pi * np.arctan(np.divide(uVec[:, 1], uVec[:, 0])) # deg
         plt.plot(uAngles, label=r'$\angle x^u_k$')
         plt.xlabel('k')
+        plt.ylabel('deg')
         plt.grid()
         plt.legend()
 
     for pIdx in range(min(4, objectivePowerEfficiencyPerBatch_sortedIndexes.shape[0])):
         maxObjectivePowerEfficiencyIndex = objectivePowerEfficiencyPerBatch_sortedIndexes[-1-pIdx, 0]
 
-        enableSubPlots = False
-        if enableSubPlots:
-            plt.subplots(nrows=3, ncols=1)
+        if dim_x == 2:
+            plt.figure(figsize=(12, 4))
+            plt.subplot(1, 2, 1)
         else:
             plt.figure()
-            if optimizationMode == 'maximizeFiltering':
-                plt.title(r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
-            elif optimizationMode == 'maximizeSmoothing':
-                plt.title(r'$\frac{\sum_{k=0}^{N-1} ||\xi^s_k||_2^2}{\sum_{k=0}^{N-1} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
-            plt.subplots_adjust(top=0.8)
 
-        if enableSubPlots: plt.subplot(4, 1, 1)
+        if optimizationMode == 'maximizeFiltering':
+            plt.title(r'$\frac{\sum_{k=1}^{N-1} ||\xi_k||_2^2}{\sum_{k=0}^{N-2} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
+        elif optimizationMode == 'maximizeSmoothing':
+            plt.title(r'$\frac{\sum_{k=0}^{N-1} ||\xi^s_k||_2^2}{\sum_{k=0}^{N-1} ||x^u_k||_2^2}$ = %f db' % watt2db(objectivePowerEfficiencyPerBatch[maxObjectivePowerEfficiencyIndex]))
+        plt.subplots_adjust(top=0.8)
+
         u_norm = np.linalg.norm(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
             plt.plot(u_norm, label=r'${||x^u_k||}_2$')
         else:
             plt.plot(u[:-1, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$u$')
-        if enableSubPlots:
-            plt.title(r'$\frac{1}{N}\sum_{k} {||x^u_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(u_norm, 2).mean())))
-            plt.grid()
-            plt.legend()
-
-        if enableSubPlots: plt.subplot(4, 1, 2)
+        '''
         z_norm = np.linalg.norm(z[:-1, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
             plt.plot(z_norm, label=r'${||z||}_2$')
         else:
             plt.plot(z[:-1, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$z$')
-        if enableSubPlots:
-            plt.title(r'$\frac{1}{N}\sum_{k} {||H^{T} x^u_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(z_norm, 2).mean())))
-            plt.grid()
-            plt.legend()
-
-        if enableSubPlots: plt.subplot(4, 1, 3)
-        x_est_norm = np.linalg.norm(x_est_f[1:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
+        '''
+        x_est_norm = np.linalg.norm(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
             plt.plot(x_est_norm, label=r'${||\xi_{k}||}_2$')
         else:
             plt.plot(x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\xi_{k}$')
-        if enableSubPlots:
-            plt.title(r'$\frac{1}{N}\sum_{k} {||\xi_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(x_est_norm, 2).mean())))
-            plt.grid()
-            plt.legend()
-
-
-        if enableSubPlots: plt.subplot(4, 1, 4)
 
         x_est_norm = np.linalg.norm(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
         if dim_x > 1:
             plt.plot(x_est_norm, label=r'${||\xi^s_{k}||}_2$')
         else:
             plt.plot(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], label=r'$\xi^s_{k}$')
-        if enableSubPlots:
-            plt.title(r'$\frac{1}{N}\sum_{k} {||\xi^s_{k}||}_2^2 = $ %2.2f dbm' % (watt2dbm(np.power(x_est_norm, 2).mean())))
 
-        if not enableSubPlots:
-            bar_z = z[:, maxObjectivePowerEfficiencyIndex] - np.matmul(np.transpose(sysModel["H"]), x_est_f[:, maxObjectivePowerEfficiencyIndex])
-            norm_bar_z = np.linalg.norm(bar_z, axis=1)
-            if dim_x > 1:
-                plt.plot(norm_bar_z, label=r'$||\bar{z}||_2$')
-            else:
-                plt.plot(bar_z[:,0,0], label=r'$\bar{z}$')
+        bar_z = z[:, maxObjectivePowerEfficiencyIndex] - np.matmul(np.transpose(sysModel["H"]), x_est_f[:, maxObjectivePowerEfficiencyIndex])
+        norm_bar_z = np.linalg.norm(bar_z, axis=1)
+        if dim_x > 1:
+            plt.plot(norm_bar_z, label=r'$||\bar{z}||_2$')
+        else:
+            plt.plot(bar_z[:,0,0], label=r'$\bar{z}$')
 
         plt.grid()
         plt.legend()
 
-        if enableSubPlots: plt.subplots_adjust(hspace=1)
+        if dim_x == 2:
+            plt.subplot(1, 2, 2)
+
+            uVec = u[:-1, maxObjectivePowerEfficiencyIndex, :, 0]
+            uAngles = 180 / np.pi * np.arctan(np.divide(uVec[:, 1], uVec[:, 0]))  # deg
+            plt.plot(uAngles, label=r'$\angle x^u_k$')
+
+            x_est_fVec = x_est_f[:, maxObjectivePowerEfficiencyIndex, :, 0]
+            x_est_fVecAngles = 180 / np.pi * np.arctan(np.divide(x_est_fVec[:, 1], x_est_fVec[:, 0]))  # deg
+            plt.plot(x_est_fVecAngles, label=r'$\angle \xi_k$')
+
+            x_est_sVec = x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0]
+            x_est_sVecAngles = 180 / np.pi * np.arctan(np.divide(x_est_sVec[:, 1], x_est_sVec[:, 0]))  # deg
+            plt.plot(x_est_sVecAngles, label=r'$\angle \xi^s_k$')
+
+            bar_zVec = bar_z
+            bar_zAngles = 180 / np.pi * np.arctan(np.divide(bar_zVec[:, 1], bar_zVec[:, 0]))  # deg
+            plt.plot(bar_zAngles, label=r'$\angle x^u_k$')
+
+            plt.grid()
+            plt.legend()
+            plt.xlabel('k')
+            plt.ylabel('deg')
+
+
+
+
     plt.show()
