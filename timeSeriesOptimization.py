@@ -14,17 +14,17 @@ import time
 enableOptimization = True
 enableInvestigation = True
 enableConstantInputSearch = False
-np.random.seed(16)
+np.random.seed(13)
 enableOnlyAngleOptimization = False
 
-filePath = "./minimizingSmoothingImprovement2D_perSampleConstrain.pt"
-optimizationMode = 'minimizingSmoothingImprovement' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
+filePath = "./maximizingFiltering2D_perSampleConstrain.pt"
+optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
 
 if enableOptimization:
     dim_x, dim_z = 2, 2
     N = 1000  # time steps
-    batchSize = 256
-    useCuda = False
+    batchSize = 2048
+    useCuda = True
 
     assert enableOnlyAngleOptimization and (dim_x == 2) or not(enableOnlyAngleOptimization)
 
