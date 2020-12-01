@@ -14,8 +14,8 @@ import time
 enableOptimization = True
 enableInvestigation = True
 enableConstantInputSearch = False
-np.random.seed(13)
-enableOnlyAngleOptimization = True
+np.random.seed(16)
+enableOnlyAngleOptimization = False
 
 filePath = "./minimizingSmoothingImprovement2D_perSampleConstrain.pt"
 optimizationMode = 'minimizingSmoothingImprovement' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
@@ -129,7 +129,7 @@ if enableOptimization:
             loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - smoothingMeanEnergy)
         elif optimizationMode == 'minimizingSmoothingImprovement':
             filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
-            smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
+            smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s[1:])  # mean energy at every batch [volt]
             meanInputEnergy = calcTimeSeriesMeanEnergy(u)  # mean energy at every batch [volt]
             inputEnergy = torch.sum(torch.pow(u, 2), dim=2)
             #loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) + (filteringMeanEnergy - smoothingMeanEnergy))
