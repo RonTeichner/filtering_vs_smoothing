@@ -17,8 +17,8 @@ enableConstantInputSearch = False
 np.random.seed(13)
 enableOnlyAngleOptimization = False
 
-filePath = "./maximizingFiltering2D_perSampleConstrain.pt"
-optimizationMode = 'maximizeFiltering' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
+filePath = "./maximizingSmoothing2D_perSampleConstrain.pt"
+optimizationMode = 'maximizeSmoothing' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
 
 if enableOptimization:
     dim_x, dim_z = 2, 2
