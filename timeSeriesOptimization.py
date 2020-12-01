@@ -15,7 +15,7 @@ enableOptimization = True
 enableInvestigation = True
 enableConstantInputSearch = False
 np.random.seed(13)
-enableOnlyAngleOptimization = False
+enableOnlyAngleOptimization = True
 
 filePath = "./minimizingSmoothingImprovement2D_perSampleConstrain.pt"
 optimizationMode = 'minimizingSmoothingImprovement' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
