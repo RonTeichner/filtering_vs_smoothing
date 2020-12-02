@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.cm as cm
 from pytorchKalman_func import *
-from analyticResults_func import watt2db, volt2dbm, watt2dbm
+from analyticResults_func import watt2db, volt2dbm, watt2dbm, calc_tildeC
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,7 +11,7 @@ import torch.optim as optim
 import pickle
 import time
 
-enableOptimization = True
+enableOptimization = False
 enableInvestigation = True
 enableConstantInputSearch = False
 np.random.seed(13)
@@ -196,6 +196,9 @@ if enableInvestigation:
     Ka_0 = np.dot(theoreticalBarSigma, np.dot(sysModel["H"], np.linalg.inv(np.dot(np.transpose(sysModel["H"]), np.dot(theoreticalBarSigma, sysModel["H"])) + sysModel["R"])))  # first smoothing gain
     K = np.dot(sysModel["F"], Ka_0)  # steadyKalmanGain
     tildeF = sysModel["F"] - np.dot(K, np.transpose(sysModel["H"]))
+    inv_F_Sigma = np.linalg.inv(np.matmul(sysModel["F"], theoreticalBarSigma))
+    K_HT = np.matmul(K, sysModel["H"].transpose())
+    D_int = np.matmul(inv_F_Sigma, K_HT)
     print(f'F = {sysModel["F"]}; H = {sysModel["H"]}; Q = {sysModel["Q"]}; R = {sysModel["R"]}')
     print((f'tildeF = {tildeF}; KH\' = {np.multiply(K, np.transpose(sysModel["H"]))}'))
 
@@ -281,8 +284,11 @@ if enableInvestigation:
     # plot the angles of u:
     if dim_x == 2:
         plt.subplot(1, 2, 2)
-        uVec = u[:-1, maxObjectivePowerEfficiencyIndex, :, 0]
+        uVec = u[:, maxObjectivePowerEfficiencyIndex, :, 0]
         uAngles = 180/np.pi * np.arctan(np.divide(uVec[:, 1], uVec[:, 0])) # deg
+        midIndex = int(uAngles.shape[0] / 2)
+        lowIndex, highIndex = int(midIndex - 0.2 * uAngles.shape[0]), int(midIndex + 0.2 * uAngles.shape[0])
+        plt.title(r'$\operatorname{std}(\angle x^u_k)$[%d:%d] = %f [deg]' % (lowIndex, highIndex, np.std(uAngles[lowIndex:highIndex])))
         plt.plot(uAngles, label=r'$\angle x^u_k$')
         plt.xlabel('k')
         plt.ylabel('deg')
@@ -362,7 +368,49 @@ if enableInvestigation:
             plt.xlabel('k')
             plt.ylabel('deg')
 
+    if dim_x == 2:
+        plt.figure(figsize=(12, 4))
+        plt.subplot(1, 3, 1)
+    else:
+        plt.figure()
 
+    maxObjectivePowerEfficiencyIndex = objectivePowerEfficiencyPerBatch_sortedIndexes[-1, 0]
+    uMat = np.zeros((N, dim_x, dim_x))
+    for k in range(N):
+        tildeC_k_k = calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, k, k, N)
+        uMat[k] = np.matmul(tildeC_k_k, K_HT)
+    uMat_dot_u = np.matmul(uMat, u[:, maxObjectivePowerEfficiencyIndex, :, :])
+    uMat_dot_u_norm = np.linalg.norm(uMat_dot_u, axis=1)[:, 0]
+    plt.plot(np.power(uMat_dot_u_norm, 2), label=r'$||\tilde{C}_{k,k} KH\' x^u_k||_2^2$')
+    x_est_norm = np.linalg.norm(x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0], axis=1)
+    plt.plot(np.power(x_est_norm, 2), label=r'${||\xi^s_{k \mid N-1}||}_2^2$')
 
+    plt.grid()
+    plt.legend()
+
+    plt.subplot(1, 3, 2)
+    #plt.plot(volt2dbm(x_est_norm) - volt2dbm(uMat_dot_u_norm), label=r'$\frac{{||\xi^s_{k \mid N-1}||}_2^2}{||\tilde{C}_{k,k} KH\' x^u_k||_2^2}$')
+    #plt.ylabel('db')
+    plt.plot(np.divide(np.power(x_est_norm, 2), np.power(uMat_dot_u_norm, 2)), label=r'$\frac{{||\xi^s_{k \mid N-1}||}_2^2}{||\tilde{C}_{k,k} KH\' x^u_k||_2^2}$')
+    plt.xlabel('k')
+    plt.grid()
+    plt.legend()
+
+    if dim_x == 2:
+        plt.subplot(1, 3, 3)
+        uMat_dot_uVec = uMat_dot_u[:, :, 0]
+        uMat_dot_uVecAngles = 180 / np.pi * np.arctan(np.divide(uMat_dot_uVec[:, 1], uMat_dot_uVec[:, 0]))  # deg
+        plt.plot(uMat_dot_uVecAngles, label=r'$\angle \tilde{C}_{k,k} KH\' x^u_k$')
+
+        midIndex = int(uMat_dot_uVecAngles.shape[0] / 2)
+        lowIndex, highIndex = int(midIndex - 0.2 * uMat_dot_uVecAngles.shape[0]), int(midIndex + 0.2 * uMat_dot_uVecAngles.shape[0])
+        plt.title(r'$\operatorname{std}(\angle \tilde{C}_{k,k} KH\' x^u_k)$[%d:%d] = %f [deg]' % (lowIndex, highIndex, np.std(uMat_dot_uVecAngles[lowIndex:highIndex])))
+
+        #x_est_sVec = x_est_s[:, maxObjectivePowerEfficiencyIndex, :, 0]
+        #x_est_sVecAngles = 180 / np.pi * np.arctan(np.divide(x_est_sVec[:, 1], x_est_sVec[:, 0]))  # deg
+        #plt.plot(x_est_sVecAngles, label=r'$\angle \xi^s_k$')
+
+        plt.grid()
+        plt.legend()
 
     plt.show()
