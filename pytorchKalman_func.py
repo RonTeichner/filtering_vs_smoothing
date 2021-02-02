@@ -142,6 +142,7 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         tildeF = F - np.dot(K, np.transpose(H))
         Sint = np.matmul(np.linalg.inv(np.matmul(F, theoreticalBarSigma)), K)
         thr = 1e-20 * np.abs(tildeF).max()
+        thr_db = 0.01 # db
 
         DeltaFirstSample = np.dot(Ka_0, np.dot(np.transpose(H), theoreticalBarSigma))
         theoreticalSmoothingFilteringDiff = solve_discrete_lyapunov(a=np.dot(theoreticalBarSigma, np.dot(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma))) , q=DeltaFirstSample)
@@ -152,6 +153,22 @@ class Pytorch_filter_smoother_Obj(nn.Module):
 
         smootherRecursiveGain = np.matmul(theoreticalBarSigma, np.matmul(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma)))
         smootherGain = np.linalg.inv(F) - smootherRecursiveGain
+
+        # block matrices:
+        lambda_Xi_max = list()
+        N=0
+        while True:
+            N += 1
+            lambda_Xi_max.append(np.real(np.linalg.eigvals(compute_Xi_l_N(tildeF, K, H, 0, N=N, dim_x=self.dim_x))).max())
+            if N > 1000 or (N > 5 and np.abs(watt2dbm(lambda_Xi_max[-1]) - watt2dbm(lambda_Xi_max[-2])) < thr_db):
+                break
+        plt.plot(np.arange(1, N+1), watt2dbm(lambda_Xi_max))
+        plt.ylabel('dbm')
+        plt.xlabel('N')
+        plt.title(r'$\lambda^{\Xi_N}_{max}$')
+        plt.grid()
+        plt.show()
+
         '''
         print(f'The eigenvalues of tildeF: {np.linalg.eig(tildeF)[0]}')
         print(f'The eigenvalues of KH\': {np.linalg.eig(np.matmul(K, np.transpose(H)))[0]}')
@@ -173,6 +190,7 @@ class Pytorch_filter_smoother_Obj(nn.Module):
             self.smootherGain = torch.tensor(smootherGain, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.Ka_0 = torch.tensor(Ka_0, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.normalizedNoKnowledgePlayerContribution = torch.tensor(normalizedNoKnowledgePlayerContribution, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.theoretical_lambda_Xi_N_max = torch.tensor(lambda_Xi_max[-1], dtype=torch.float, requires_grad=False).contiguous().cuda()
         else:
             self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous()
             self.tildeF_transpose = torch.tensor(tildeF.transpose(), dtype=torch.float, requires_grad=False).contiguous()
@@ -187,6 +205,7 @@ class Pytorch_filter_smoother_Obj(nn.Module):
             self.smootherGain = torch.tensor(smootherGain, dtype=torch.float, requires_grad=False).contiguous()
             self.Ka_0 = torch.tensor(Ka_0, dtype=torch.float, requires_grad=False).contiguous()
             self.normalizedNoKnowledgePlayerContribution = torch.tensor(normalizedNoKnowledgePlayerContribution, dtype=torch.float, requires_grad=False).contiguous()
+            self.theoretical_lambda_Xi_N_max = torch.tensor(lambda_Xi_max[-1], dtype=torch.float, requires_grad=False).contiguous()
 
     def forward(self, z, filterStateInit):
         # z, filterStateInit are cuda
@@ -311,3 +330,25 @@ def calcTimeSeriesMeanEnergyRunningAvg(x):
 
 def noKnowledgePlayer(N, batchSize, dim_x, sigma_u_square):
     return torch.mul(torch.sqrt(sigma_u_square), torch.randn(N, batchSize, dim_x, 1))
+
+def noAccessPlayer(N, batchSize, sysModel, meanEnergy):
+    dim_x = sysModel["F"].shape[0]
+    return torch.mul(torch.sqrt(meanEnergy), torch.randn(N, batchSize, dim_x, 1))
+
+def compute_Xi_l_N(tildeF, K, H, l, N, dim_x):
+    Xi_N_l = np.zeros((N*dim_x, N*dim_x))
+    K_HT = np.matmul(K, np.transpose(H))
+    thr = 1e-20 * np.abs(tildeF).max()
+    for r in range(N):
+        for c in range(N):
+            k = np.max((r, c, l - 1))
+            summed = np.zeros((dim_x, dim_x))
+            while True:
+                k += 1
+                summedItter = np.matmul(np.transpose(np.linalg.matrix_power(tildeF, k-1-r)), np.linalg.matrix_power(tildeF, k-1-c))
+                summed = summed + summedItter
+                if np.abs(summedItter).max() < thr:
+                    break
+            Xi_N_l[dim_x*r:dim_x*(r+1), dim_x*c:dim_x*(c+1)] = np.matmul(np.transpose(K_HT), np.matmul(summed, K_HT))
+
+    return Xi_N_l

@@ -34,7 +34,7 @@ if useCuda:
 
 # estimator init values:
 filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
-filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.zeros((dim_x, 1)))
+filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.random.randn(dim_x, 1))
 filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False).contiguous()
 #filterStateInit = tilde_x[0]
 
@@ -56,27 +56,40 @@ pytorchEstimator.eval()
 tilde_x_est_f, tilde_x_est_s = pytorchEstimator(tilde_z, filterStateInit)
 # tilde_x_est_f = hat_x_k_plus_1_given_k
 
+print(f'mean energy of tilde_x: ',{watt2dbm(calcTimeSeriesMeanEnergy(tilde_x))},' [dbm]')
+
 # No knowledge player:
 sigma_u_square = 8*torch.tensor(1/dim_x, dtype=torch.float)
 u_0 = noKnowledgePlayer(N, batchSize, dim_x, sigma_u_square)
 if useCuda:
     u_0 = u_0.cuda()
 
-print(f'mean energy of tilde_x: ',{watt2dbm(calcTimeSeriesMeanEnergy(tilde_x))},' [dbm]')
 print(f'mean energy of u_0: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_0))},' [dbm]')
 
-z_0 = tilde_z + torch.matmul(H_transpose, u_0)
+# No access player:
+u_1 = noAccessPlayer(N, batchSize, sysModel, sigma_u_square)
+if useCuda:
+    u_1 = u_1.cuda()
 
+print(f'mean energy of u_1: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_1))},' [dbm]')
+
+# Kalman filters:
+z_0 = tilde_z + torch.matmul(H_transpose, u_0)
 x_0_est_f, x_0_est_s = pytorchEstimator(z_0, filterStateInit)
+
+z_1 = tilde_z + torch.matmul(H_transpose, u_1)
+x_1_est_f, x_1_est_s = pytorchEstimator(z_1, filterStateInit)
 
 tilde_e_k_given_k_minus_1 = tilde_x_est_f - tilde_x # k is the index so that at tilde_e_k_given_k_minus_1[0] we have tilde_e_0_given_minus_1
 tilde_e_k_given_N_minus_1 = tilde_x_est_s - tilde_x
 e_R_0_k_given_k_minus_1 = x_0_est_f - tilde_x
+e_R_1_k_given_k_minus_1 = x_1_est_f - tilde_x
 
 caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1)
 caligraphE_S_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_N_minus_1)
 
 caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1)
+caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1)
 
 caligraphE_tVec = np.arange(0, N, 1)
 
@@ -84,6 +97,8 @@ caligraphE_tVec = np.arange(0, N, 1)
 
 caligraphE_F_minus_1 = caligraphE_F_minus_1.detach().cpu().numpy()
 caligraphE_F_0 = caligraphE_F_0.detach().cpu().numpy()
+
+caligraphE_F_1 = caligraphE_F_1.detach().cpu().numpy()
 
 trace_bar_Sigma = np.trace(pytorchEstimator.theoreticalBarSigma.cpu().numpy())
 trace_bar_Sigma_S = np.trace(pytorchEstimator.theoreticalSmoothingSigma.cpu().numpy())
@@ -97,6 +112,7 @@ caligraphE_F_minus_1_b = caligraphE_F_minus_1[:, batchIdx]
 caligraphE_S_minus_1_b = caligraphE_S_minus_1[:, batchIdx]
 
 caligraphE_F_0_b = caligraphE_F_0[:, batchIdx]
+caligraphE_F_1_b = caligraphE_F_1[:, batchIdx]
 
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_minus_1_b), label = r'empirical ${\cal E}^{(-1)}_{F,k}$')
 plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_F_minus_1_b)), '--', label = r'theoretical $\operatorname{tr}\{\bar{\Sigma}\}$')
@@ -107,8 +123,7 @@ plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_F_m
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_b), label = r'empirical ${\cal E}^{(0)}_{F,k}$')
 plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_F_0_b)), '--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
-#minTheoretic = np.min((watt2dbm(trace_bar_Sigma), watt2dbm(trace_bar_Sigma_S), watt2dbm(theoretical_caligraphE_F_0)))
-#maxTheoretic = np.max((watt2dbm(trace_bar_Sigma), watt2dbm(trace_bar_Sigma_S), watt2dbm(theoretical_caligraphE_F_0)))
+plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_b), label = r'empirical ${\cal E}^{(1)}_{F,k}$')
 
 minTheoretic = np.min((watt2dbm(trace_bar_Sigma), watt2dbm(theoretical_caligraphE_F_0)))
 maxTheoretic = np.max((watt2dbm(trace_bar_Sigma), watt2dbm(theoretical_caligraphE_F_0)))
