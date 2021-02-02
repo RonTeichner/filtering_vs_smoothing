@@ -11,14 +11,17 @@ import torch.optim as optim
 import pickle
 import time
 
-enableOptimization = False
+enableOptimization = True
 enableInvestigation = True
 enableConstantInputSearch = False
 np.random.seed(13)
 enableOnlyAngleOptimization = False
+enableSmoothingOptimialInit = False
 
-filePath = "./maximizingSmoothing2D_perSampleConstrain.pt"
-optimizationMode = 'maximizeSmoothing' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
+enableOptimizeFilterInit = False  # this is a problematic idea cause I don't know how to constrain the init condition
+
+filePath = "./maximizingFiltering2D_perSampleConstrain.pt"
+optimizationMode = 'minimizingSmoothingImprovement' # {'maximizeFiltering', 'maximizeSmoothing', 'minimizingSmoothingImprovement'}
 
 if enableOptimization:
     dim_x, dim_z = 2, 2
@@ -28,17 +31,26 @@ if enableOptimization:
 
     assert enableOnlyAngleOptimization and (dim_x == 2) or not(enableOnlyAngleOptimization)
 
-    # estimator init values:
-    filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
-    filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.zeros((dim_x, 1)))
+    # create a single system model:
+    sysModel = GenSysModel(dim_x, dim_z)
+
+    if enableSmoothingOptimialInit:
+        filterStateInit, _ = smoothingOptimalInitCalc(sysModel)
+        filterStateInit = np.repeat(filterStateInit[None, None, :, :], batchSize, axis=1)
+    else:
+        # estimator init values:
+        filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
+        filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.zeros((dim_x, 1)))
     filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False).contiguous()
+
+    if enableOptimizeFilterInit:
+        filterStateInit = torch.randn_like(filterStateInit, dtype=torch.float)
+
     if useCuda:
         filterStateInit = filterStateInit.cuda()
     # filter_P_init: [1, batchSize, dim_x, dim_x]
     # filterStateInit: [1, batchSize, dim_x, 1]
 
-    # create a single system model:
-    sysModel = GenSysModel(dim_x, dim_z)
     print(f'F = {sysModel["F"]}; H = {sysModel["H"]}; Q = {sysModel["Q"]}; R = {sysModel["R"]}')
     H = torch.tensor(sysModel["H"], dtype=torch.float, requires_grad=False)
     H_transpose = torch.transpose(H, 1, 0)
@@ -75,9 +87,15 @@ if enableOptimization:
     #optimizer = optim.SGD([u.requires_grad_()], lr=1, momentum=0.9)
     #optimizer = optim.Adadelta([u.requires_grad_()])
     if enableOnlyAngleOptimization:
-        optimizer = optim.Adam([uAngle.requires_grad_()], lr=0.1)
+        if enableOptimizeFilterInit:
+            optimizer = optim.Adam([uAngle.requires_grad_(), filterStateInit], lr=0.1)
+        else:
+            optimizer = optim.Adam([uAngle.requires_grad_()], lr=0.1)
     else:
-        optimizer = optim.Adam([u.requires_grad_()], lr=1)
+        if enableOptimizeFilterInit:
+            optimizer = optim.Adam([u.requires_grad_(), filterStateInit], lr=1)
+        else:
+            optimizer = optim.Adam([u.requires_grad_()], lr=1)
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=20, threshold=1e-6)
     meanRootInputEnergyThr = 1 # |volt|
@@ -113,38 +131,39 @@ if enableOptimization:
             z = torch.matmul(H_transpose, u)
         x_est_f, x_est_s = pytorchEstimator(z, filterStateInit)
 
+        filterStateInitEnergy = calcTimeSeriesMeanEnergy(filterStateInit)
         if optimizationMode == 'maximizeFiltering':
             filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
             meanInputEnergy = calcTimeSeriesMeanEnergy(u[:-1])  # mean energy at every batch [volt]
             inputEnergy = torch.sum(torch.pow(u[:-1], 2), dim=2)
             #loss = torch.mean(F.relu(meanInputEnergy-meanRootInputEnergyThr) - filteringMeanEnergy)
-            loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - filteringMeanEnergy)
+            loss = torch.mean(F.relu(filterStateInitEnergy - meanRootInputEnergyThr) + torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - filteringMeanEnergy)
         elif optimizationMode == 'maximizeSmoothing':
             filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
             smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
             meanInputEnergy = calcTimeSeriesMeanEnergy(u)  # mean energy at every batch [volt]
             inputEnergy = torch.sum(torch.pow(u, 2), dim=2)
             #loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) - smoothingMeanEnergy)
-            loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - smoothingMeanEnergy)
+            loss = torch.mean(F.relu(filterStateInitEnergy - meanRootInputEnergyThr) + torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) - smoothingMeanEnergy)
         elif optimizationMode == 'minimizingSmoothingImprovement':
-            filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f[1:])  # mean energy at every batch [volt]
-            smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s[1:])  # mean energy at every batch [volt]
+            filteringMeanEnergy = calcTimeSeriesMeanEnergy(x_est_f)  # mean energy at every batch [volt]
+            smoothingMeanEnergy = calcTimeSeriesMeanEnergy(x_est_s)  # mean energy at every batch [volt]
             meanInputEnergy = calcTimeSeriesMeanEnergy(u)  # mean energy at every batch [volt]
             inputEnergy = torch.sum(torch.pow(u, 2), dim=2)
             #loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) + (filteringMeanEnergy - smoothingMeanEnergy))
-            loss = torch.mean(torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) + (filteringMeanEnergy - smoothingMeanEnergy))
+            loss = torch.mean(F.relu(meanInputEnergy - meanRootInputEnergyThr) - (filteringMeanEnergy - smoothingMeanEnergy))
+            #loss = torch.mean(F.relu(filterStateInitEnergy - meanRootInputEnergyThr) + torch.mean(F.relu(inputEnergy - meanRootInputEnergyThr)) + (filteringMeanEnergy - smoothingMeanEnergy))
 
         # loss.is_contiguous()
-        loss.backward()
-        optimizer.step()  # parameter update
 
         if optimizationMode == 'maximizeFiltering':
             energyEfficience = np.divide(filteringMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
         elif optimizationMode == 'maximizeSmoothing':
             energyEfficience = np.divide(smoothingMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
         elif optimizationMode == 'minimizingSmoothingImprovement':
-            energyEfficience = np.divide(smoothingMeanEnergy.detach().cpu().numpy() - filteringMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
+            #energyEfficience = np.divide(smoothingMeanEnergy.detach().cpu().numpy() - filteringMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
+            energyEfficience = np.divide(- smoothingMeanEnergy.detach().cpu().numpy() + filteringMeanEnergy.detach().cpu().numpy(), meanInputEnergy.detach().cpu().numpy())
 
         scheduler.step(energyEfficience.max())
 
@@ -152,7 +171,7 @@ if enableOptimization:
             if energyEfficience.max() > maxEnergyEfficience:
                 maxEnergyEfficience = energyEfficience.max()
                 print('SAVED epoch: %d - max,min,mean mean energy efficience %f, %f, %f; lr=%f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean(), scheduler._last_lr[-1]))
-                pickle.dump({"sysModel": sysModel, "u": u.detach().cpu().numpy()}, open(filePath, "wb"))
+                pickle.dump({"sysModel": sysModel, "u": u.detach().cpu().numpy(), "filterStateInit": filterStateInit.detach().cpu().numpy()}, open(filePath, "wb"))
             else:
                 print('epoch: %d - max,min,mean mean energy efficience %f, %f, %f; lr=%f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean(), scheduler._last_lr[-1]))
 
@@ -163,7 +182,7 @@ if enableOptimization:
             if energyEfficience.max() > maxEnergyEfficience + saveThr:
                 maxEnergyEfficience = energyEfficience.max()
                 print('SAVED epoch: %d - max,min,mean mean energy efficience %f, %f, %f; lr=%f' % (epoch, energyEfficience.max(), energyEfficience.min(), energyEfficience.mean(), scheduler._last_lr[-1]))
-                pickle.dump({"sysModel": sysModel, "u": u.detach().cpu().numpy()}, open(filePath, "wb"))
+                pickle.dump({"sysModel": sysModel, "u": u.detach().cpu().numpy(), "filterStateInit": filterStateInit.detach().cpu().numpy()}, open(filePath, "wb"))
 
         if energyEfficience.mean() > lastEnergyEfficienceMean:
             lastEnergyEfficienceMean = energyEfficience.mean()
@@ -177,10 +196,14 @@ if enableOptimization:
             print(f'Stoping optimization due to learning rate of {scheduler._last_lr[-1]}')
             break
 
+        loss.backward()
+        optimizer.step()  # parameter update
+
 
 if enableInvestigation:
     model_results = pickle.load(open(filePath, "rb"))
     sysModel = model_results["sysModel"]
+    filterStateInit = model_results["filterStateInit"]
     if enableConstantInputSearch:
         u = constantMaximizeFilteringInputSearch(sysModel, 1000)
     else:
@@ -189,8 +212,6 @@ if enableInvestigation:
 
     max_u_norms = np.repeat(np.repeat(np.linalg.norm(u, axis=2).max(axis=0)[None, :, :, None], N, axis=0), dim_x, axis=2)
     u = np.divide(u, max_u_norms)
-
-    z = np.matmul(np.transpose(sysModel["H"]), u)
 
     theoreticalBarSigma = solve_discrete_are(a=np.transpose(sysModel["F"]), b=sysModel["H"], q=sysModel["Q"], r=sysModel["R"])
     Ka_0 = np.dot(theoreticalBarSigma, np.dot(sysModel["H"], np.linalg.inv(np.dot(np.transpose(sysModel["H"]), np.dot(theoreticalBarSigma, sysModel["H"])) + sysModel["R"])))  # first smoothing gain
@@ -202,14 +223,12 @@ if enableInvestigation:
     print(f'F = {sysModel["F"]}; H = {sysModel["H"]}; Q = {sysModel["Q"]}; R = {sysModel["R"]}')
     print((f'tildeF = {tildeF}; KH\' = {np.multiply(K, np.transpose(sysModel["H"]))}'))
 
-
     # run Anderson's filter & smoother:
     # estimator init values:
-    filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
-    filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.zeros((dim_x, 1)))
     #x_est_f, x_est_s = Anderson_filter_smoother(z, sysModel, filter_P_init, filterStateInit)
 
     pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=False)
+    z = np.matmul(np.transpose(sysModel["H"]), u)
     x_est_f, x_est_s = pytorchEstimator(torch.tensor(z, dtype=torch.float), torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False))
     x_est_f = x_est_f.detach().cpu().numpy()
     x_est_s = x_est_s.detach().cpu().numpy()

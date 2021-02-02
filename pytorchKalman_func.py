@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 #from __future__ import print_function
 #from __future__ import division
-from analyticResults_func import watt2db, volt2dbm, watt2dbm
+from analyticResults_func import watt2db, volt2dbm, watt2dbm, calc_tildeB, calc_tildeC
 
 
 def GenSysModel(dim_x, dim_z):
@@ -143,6 +143,13 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         Sint = np.matmul(np.linalg.inv(np.matmul(F, theoreticalBarSigma)), K)
         thr = 1e-20 * np.abs(tildeF).max()
 
+        DeltaFirstSample = np.dot(Ka_0, np.dot(np.transpose(H), theoreticalBarSigma))
+        theoreticalSmoothingFilteringDiff = solve_discrete_lyapunov(a=np.dot(theoreticalBarSigma, np.dot(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma))) , q=DeltaFirstSample)
+        theoreticalSmoothingSigma = theoreticalBarSigma - theoreticalSmoothingFilteringDiff
+
+        A_N = solve_discrete_lyapunov(a=tildeF, q=np.eye(self.dim_x))
+        normalizedNoKnowledgePlayerContribution = np.trace(np.matmul(np.dot(H, np.transpose(K)), np.matmul(np.transpose(A_N), np.dot(K, np.transpose(H)))))
+
         smootherRecursiveGain = np.matmul(theoreticalBarSigma, np.matmul(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma)))
         smootherGain = np.linalg.inv(F) - smootherRecursiveGain
         '''
@@ -161,9 +168,11 @@ class Pytorch_filter_smoother_Obj(nn.Module):
             self.H_transpose = torch.tensor(H.transpose(), dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.thr = torch.tensor(thr, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.theoreticalBarSigma = torch.tensor(theoreticalBarSigma, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.theoreticalSmoothingSigma = torch.tensor(theoreticalSmoothingSigma, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.smootherRecursiveGain = torch.tensor(smootherRecursiveGain, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.smootherGain = torch.tensor(smootherGain, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.Ka_0 = torch.tensor(Ka_0, dtype=torch.float, requires_grad=False).contiguous().cuda()
+            self.normalizedNoKnowledgePlayerContribution = torch.tensor(normalizedNoKnowledgePlayerContribution, dtype=torch.float, requires_grad=False).contiguous().cuda()
         else:
             self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous()
             self.tildeF_transpose = torch.tensor(tildeF.transpose(), dtype=torch.float, requires_grad=False).contiguous()
@@ -173,9 +182,11 @@ class Pytorch_filter_smoother_Obj(nn.Module):
             self.H_transpose = torch.tensor(H.transpose(), dtype=torch.float, requires_grad=False).contiguous()
             self.thr = torch.tensor(thr, dtype=torch.float, requires_grad=False).contiguous()
             self.theoreticalBarSigma = torch.tensor(theoreticalBarSigma, dtype=torch.float, requires_grad=False).contiguous()
+            self.theoreticalSmoothingSigma = torch.tensor(theoreticalSmoothingSigma, dtype=torch.float, requires_grad=False).contiguous()
             self.smootherRecursiveGain = torch.tensor(smootherRecursiveGain, dtype=torch.float, requires_grad=False).contiguous()
             self.smootherGain = torch.tensor(smootherGain, dtype=torch.float, requires_grad=False).contiguous()
             self.Ka_0 = torch.tensor(Ka_0, dtype=torch.float, requires_grad=False).contiguous()
+            self.normalizedNoKnowledgePlayerContribution = torch.tensor(normalizedNoKnowledgePlayerContribution, dtype=torch.float, requires_grad=False).contiguous()
 
     def forward(self, z, filterStateInit):
         # z, filterStateInit are cuda
@@ -242,8 +253,61 @@ def constantMaximizeFilteringInputSearch(sysModel, N):
 
     return uOptimal
 
+def smoothingOptimalInitCalc(sysModel):
+    N = 100000
+    dim_x = sysModel["F"].shape[0]
+    theoreticalBarSigma = solve_discrete_are(a=np.transpose(sysModel["F"]), b=sysModel["H"], q=sysModel["Q"], r=sysModel["R"])
+    Ka_0 = np.dot(theoreticalBarSigma, np.dot(sysModel["H"], np.linalg.inv(np.dot(np.transpose(sysModel["H"]), np.dot(theoreticalBarSigma, sysModel["H"])) + sysModel["R"])))  # first smoothing gain
+    K = np.dot(sysModel["F"], Ka_0)  # steadyKalmanGain
+    tildeF = sysModel["F"] - np.dot(K, np.transpose(sysModel["H"]))
+    inv_F_Sigma = np.linalg.inv(np.matmul(sysModel["F"], theoreticalBarSigma))
+    K_HT = np.matmul(K, sysModel["H"].transpose())
+    D_int = np.matmul(inv_F_Sigma, K_HT)
+    smootherRecursiveGain = np.matmul(theoreticalBarSigma, np.matmul(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma)))
+    tildeB_1_0 = calc_tildeB(tildeF, theoreticalBarSigma, D_int, 1, 0, N)
+    thr = 1e-20 * np.abs(tildeF).max()
+
+    # calc past:
+    tildeB_1_i = tildeB_1_0 # i=k-1=0
+    past = tildeB_1_0
+    i=0
+    while True:
+        i -= 1
+        tildeB_1_i = np.matmul(tildeB_1_i, tildeF)
+        past = past + tildeB_1_i
+        if np.abs(tildeB_1_i).max() < thr:
+            break
+
+    # calc future:
+    tildeC_k_k = calc_tildeC(tildeF, theoreticalBarSigma, D_int, inv_F_Sigma, 1, 1, N)  # i=k=1
+    tildeC_k_i = tildeC_k_k  # i=k=1
+    future = tildeC_k_i
+    i=1
+    while True:
+        i += 1
+        tildeC_k_i = np.matmul(smootherRecursiveGain, tildeC_k_i)
+        future = future + tildeC_k_i
+        if np.abs(tildeC_k_i).max() < thr:
+            break
+
+    A = np.matmul(past + future, K_HT)
+    w, v = np.linalg.eig(np.matmul(np.transpose(A), A))
+    x_u_star = v[:, np.argmax(np.abs(w)):np.argmax(np.abs(w))+1]
+
+    filterStateInit = np.matmul(np.matmul(np.linalg.inv(np.eye(dim_x) - tildeF), K_HT), x_u_star)
+
+    return filterStateInit, x_u_star
+
 def calcTimeSeriesMeanRootEnergy(x):
     return torch.mean(torch.norm(x, dim=2), dim=0)
 
 def calcTimeSeriesMeanEnergy(x):
     return torch.mean(torch.sum(torch.pow(x, 2), dim=2), dim=0)
+
+def calcTimeSeriesMeanEnergyRunningAvg(x):
+    norm_x = torch.sum(torch.pow(x, 2), dim=2)
+    cumsum_norm_x = torch.cumsum(norm_x, dim=0)
+    return torch.div(cumsum_norm_x, torch.cumsum(torch.ones_like(cumsum_norm_x), dim=0))
+
+def noKnowledgePlayer(N, batchSize, dim_x, sigma_u_square):
+    return torch.mul(torch.sqrt(sigma_u_square), torch.randn(N, batchSize, dim_x, 1))
