@@ -24,7 +24,7 @@ def GenSysModel(dim_x, dim_z):
     H = np.random.randn(dim_x, dim_z)
     H = H/np.linalg.norm(H)
 
-    processNoiseVar, measurementNoiseVar = 1, 1
+    processNoiseVar, measurementNoiseVar = 1/dim_x, 1/dim_x
     Q = processNoiseVar * np.eye(dim_x)
     R = measurementNoiseVar * np.eye(dim_z)
     return {"F": F, "H": H, "Q": Q, "R": R}
@@ -159,7 +159,7 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         N=0
         while True:
             N += 1
-            lambda_Xi_max.append(np.real(np.linalg.eigvals(compute_Xi_l_N(tildeF, K, H, 0, N=N, dim_x=self.dim_x))).max())
+            lambda_Xi_max.append(np.real(np.linalg.eigvals(compute_Xi_l_N(tildeF, K, H, 0, N=N))).max())
             if N > 1000 or (N > 5 and np.abs(watt2dbm(lambda_Xi_max[-1]) - watt2dbm(lambda_Xi_max[-2])) < thr_db):
                 break
         plt.plot(np.arange(1, N+1), watt2dbm(lambda_Xi_max))
@@ -328,14 +328,85 @@ def calcTimeSeriesMeanEnergyRunningAvg(x):
     cumsum_norm_x = torch.cumsum(norm_x, dim=0)
     return torch.div(cumsum_norm_x, torch.cumsum(torch.ones_like(cumsum_norm_x), dim=0))
 
-def noKnowledgePlayer(N, batchSize, dim_x, sigma_u_square):
-    return torch.mul(torch.sqrt(sigma_u_square), torch.randn(N, batchSize, dim_x, 1))
+def noKnowledgePlayer(u):
+    dim_x = u.shape[2]
+    sigma_u_square = torch.tensor(1 / dim_x, dtype=torch.float)
+    return torch.mul(torch.sqrt(sigma_u_square), torch.randn_like(u))
 
-def noAccessPlayer(N, batchSize, sysModel, meanEnergy):
-    dim_x = sysModel["F"].shape[0]
-    return torch.mul(torch.sqrt(meanEnergy), torch.randn(N, batchSize, dim_x, 1))
+def noAccessPlayer(tildeF, K, H, delta_u, delta_caligraphE, Ns_2_2N0_factor, u, tilde_e_k_given_k_minus_1):
+    # tilde_e_k_given_k_minus_1 should be used only for the window size calculation
+    use_cuda = tildeF.is_cuda
+    N, batchSize = u.shape[0], u.shape[1]
+    #Xi_N = compute_Xi_l_N(tildeF, K, H, 0, N)
+    #bar_Xi_N = compute_bar_Xi_N(tildeF, K, H, N)
+    N_0 = 2 # init value
+    while True:
+        powerUsedSoFar = torch.zeros(batchSize)
+        if use_cuda:
+            powerUsedSoFar.cuda()
 
-def compute_Xi_l_N(tildeF, K, H, l, N, dim_x):
+        for j in range(N):
+            # calc with N0 window:
+            Xi_N0, b_N0, alpha_N0 = noAccessPlayer_optParams(tildeF, K, H, j, N_0, N, powerUsedSoFar, u[max(0,j-N_0):j])
+            u_N0_j_full = corollary_4_opt(Xi_N0, b_N0, alpha_N0)
+            u_N0_j = u_N0_j_full[0:1]
+
+            u_full = torch.cat((u[:j], u_N0_j_full), dim=0)
+            #caligraphE_N0_j = torch.matmul(torch.transpose(u_full, 2, 3), torch.matmul(Xi_N, u_full)) + 2*torch.matmul(torch.transpose(tilde_e_k_given_k_minus_1, 2, 3), torch.matmul(bar_Xi_N, u_full))
+            caligraphE_N0_j = compute_caligraphE(tildeF, K, H, u_full)
+
+            # calc with 2N0 window:
+            Xi_2N0, b_2N0, alpha_2N0 = noAccessPlayer_optParams(tildeF, K, H, j, 2*N_0, N, powerUsedSoFar, u[max(0,j - 2*N_0):j])
+            u_2N0_j_full = corollary_4_opt(Xi_2N0, b_2N0, alpha_2N0)
+            u_2N0_j = u_2N0_j_full[0:1]
+
+            u_full = torch.cat((u[:j], u_2N0_j_full), dim=0)
+            #caligraphE_2N0_j = torch.matmul(torch.transpose(u_full, 2, 3), torch.matmul(Xi_N, u_full)) + 2*torch.matmul(torch.transpose(tilde_e_k_given_k_minus_1, 2, 3), torch.matmul(bar_Xi_N, u_full))
+            caligraphE_2N0_j = compute_caligraphE(tildeF, K, H, u_full)
+
+            # test window size:
+            if windowSizeTest(u_N0_j, u_2N0_j, caligraphE_N0_j, caligraphE_2N0_j, delta_u, delta_caligraphE):
+                u[j] = u_N0_j
+                powerUsedSoFar += torch.sum(torch.pow(u[j], 2), dim=2)
+            else:
+                N_0 = 2*N_0
+                Ns = Ns_2_2N0_factor * 2*N_0
+                assert N > 2*N_0 + Ns
+                break
+
+        if j == N-1: # end of time-series reached with current window size
+            break
+    return u
+
+def corollary_4_opt(Xi, tilde_b, alpha):
+    b = -tilde_b
+    A = -1/torch.sqrt(alpha)
+    return u
+
+def windowSizeTest(u_N0_j, u_2N0_j, caligraphE_N0_j, caligraphE_2N0_j, delta_u, delta_caligraphE):
+    delta_u_condition = torch.max(torch.div(torch.sum(torch.pow(u_N0_j - u_2N0_j, 2), dim=2), torch.sum(torch.pow(u_2N0_j, 2), dim=2))) < delta_u
+    delta_caligraphE_condition = torch.max(torch.div(torch.abs(caligraphE_N0_j - caligraphE_2N0_j), torch.abs(caligraphE_2N0_j))) < delta_caligraphE
+    return delta_u_condition and delta_caligraphE_condition
+
+def noAccessPlayer_optParams(tildeF, K, H, j, N_0, N, powerUsedSoFar, relevant_u):
+    nSamples, batchSize, dim_x = relevant_u.shape[0], relevant_u.shape[1], relevant_u.shape[2]
+    blockVec_u = relevant_u.permute(1, 0, 2, 3).reshape(batchSize, nSamples*dim_x, 1)
+    if j < N_0:
+        Xi = compute_J_N(tildeF, K, H, j, j + N_0)
+        b = compute_tildeb_1(tildeF, K, H, blockVec_u, j, j, j + N_0)
+        alpha = j + N_0 - powerUsedSoFar
+    elif j <= N - N_0:
+        Xi = compute_J_N(tildeF, K, H, j, j + N_0)
+        b = compute_tildeb_1(tildeF, K, H, blockVec_u, N_0, j, j + N_0)
+        alpha = j + N_0 - powerUsedSoFar
+    else:
+        Xi = compute_J_N(tildeF, K, H, j, N)
+        b = compute_tildeb_1(tildeF, K, H, blockVec_u, N_0, j, N)
+        alpha = N - powerUsedSoFar
+    return Xi, b, alpha
+
+def compute_Xi_l_N(tildeF, K, H, l, N):
+    dim_x = tildeF.shape[0]
     Xi_N_l = np.zeros((N*dim_x, N*dim_x))
     K_HT = np.matmul(K, np.transpose(H))
     thr = 1e-20 * np.abs(tildeF).max()
@@ -347,8 +418,81 @@ def compute_Xi_l_N(tildeF, K, H, l, N, dim_x):
                 k += 1
                 summedItter = np.matmul(np.transpose(np.linalg.matrix_power(tildeF, k-1-r)), np.linalg.matrix_power(tildeF, k-1-c))
                 summed = summed + summedItter
-                if np.abs(summedItter).max() < thr:
+                if np.abs(summedItter).max() < thr or k == N-1:
                     break
+
             Xi_N_l[dim_x*r:dim_x*(r+1), dim_x*c:dim_x*(c+1)] = np.matmul(np.transpose(K_HT), np.matmul(summed, K_HT))
 
     return Xi_N_l
+
+def compute_bar_Xi_N(tildeF, K, H, N):
+    dim_x = tildeF.shape[0]
+    bar_Xi_N = np.zeros((N*dim_x, N*dim_x))
+    K_HT = np.matmul(K, np.transpose(H))
+    for r in range(N):
+        for c in range(r):
+            bar_Xi_N[dim_x * r:dim_x * (r + 1), dim_x * c:dim_x * (c + 1)] = np.matmul(np.linalg.matrix_power(tildeF, r - 1 - c), K_HT)
+
+    return bar_Xi_N
+
+def compute_J_N(tildeF, K, H, j, N):
+    dim_x = tildeF.shape[0]
+    use_cuda = tildeF.is_cuda
+    J_N = torch.zeros((N-j)*dim_x, (N-j)*dim_x, dtype=torch.float)
+    if use_cuda:
+        J_N.cuda()
+
+    summed = torch.zeros(dim_x, dim_x, dtype=torch.float)
+    if use_cuda:
+        summed.cuda()
+
+    K_HT = torch.matmul(K, torch.transpose(H, 1, 0))
+    thr = 1e-20 * torch.max(torch.abs(tildeF))
+    for r in range(N-j):
+        for c in range(N-j):
+            k = j + np.max((r, c))
+            summed = torch.zeros_like(summed)
+            while True:
+                k += 1
+                summedItter = torch.matmul(torch.transpose(torch.matrix_power(tildeF, k-1-r-j), 1, 0), torch.matrix_power(tildeF, k-1-c-j))
+                summed = summed + summedItter
+                if torch.max(torch.abs(summedItter)) < thr or k == N-1:
+                    break
+            J_N[dim_x*r:dim_x*(r+1), dim_x*c:dim_x*(c+1)] = torch.matmul(torch.transpose(K_HT, 1, 0), torch.matmul(summed, K_HT))
+
+    return J_N
+
+def compute_tildeJ_N0_j_N(tildeF, K, H, N_0, j, N):
+    dim_x = tildeF.shape[0]
+    use_cuda = tildeF.is_cuda
+    tildeJ_N0_j_N = torch.zeros(N_0*dim_x, (N-j)*dim_x, dtype=torch.float)
+    if use_cuda:
+        tildeJ_N0_j_N.cuda()
+
+    summed = torch.zeros(dim_x, dim_x, dtype=torch.float)
+    if use_cuda:
+        summed.cuda()
+
+    K_HT = torch.matmul(K, torch.transpose(H, 1, 0))
+    thr = 1e-20 * torch.max(torch.abs(tildeF))
+    for r in range(N_0):
+        for c in range(N-j):
+            k = np.max((r-N_0+j, c+j))
+            summed = torch.zeros_like(summed)
+            while True:
+                k += 1
+                summedItter = torch.matmul(torch.transpose(torch.matrix_power(tildeF, k-1-r-j+N_0), 1, 0), torch.matrix_power(tildeF, k-1-c-j))
+                summed = summed + summedItter
+                if torch.max(torch.abs(summedItter)) < thr or k == N-1:
+                    break
+            tildeJ_N0_j_N[dim_x*r:dim_x*(r+1), dim_x*c:dim_x*(c+1)] = torch.matmul(torch.transpose(K_HT, 1, 0), torch.matmul(summed, K_HT))
+
+    return tildeJ_N0_j_N
+
+def compute_tildeb_1(tildeF, K, H, blockVec_u, N_0, j, N):
+    if blockVec_u.shape[1] == 0:
+        tildeb_1 = torch.zeros_like(blockVec_u)
+    else:
+        tildeJ_N0_j_N = compute_tildeJ_N0_j_N(tildeF, K, H, N_0, j, N)
+        tildeb_1 = torch.matmul(torch.transpose(tildeJ_N0_j_N, 1, 0), blockVec_u)
+    return tildeb_1

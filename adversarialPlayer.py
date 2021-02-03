@@ -14,8 +14,9 @@ import time
 #np.random.seed(13)
 
 dim_x, dim_z = 5, 3
-N = 100000  # time steps
-batchSize = 1
+N = 1000  # time steps
+Ns_2_2N0_factor = 100
+batchSize = 7
 useCuda = False
 
 # create a single system model:
@@ -55,21 +56,26 @@ pytorchEstimator.eval()
 
 tilde_x_est_f, tilde_x_est_s = pytorchEstimator(tilde_z, filterStateInit)
 # tilde_x_est_f = hat_x_k_plus_1_given_k
+tilde_e_k_given_k_minus_1 = tilde_x_est_f - tilde_x # k is the index so that at tilde_e_k_given_k_minus_1[0] we have tilde_e_0_given_minus_1
+tilde_e_k_given_N_minus_1 = tilde_x_est_s - tilde_x
 
 print(f'mean energy of tilde_x: ',{watt2dbm(calcTimeSeriesMeanEnergy(tilde_x))},' [dbm]')
 
 # No knowledge player:
-sigma_u_square = 8*torch.tensor(1/dim_x, dtype=torch.float)
-u_0 = noKnowledgePlayer(N, batchSize, dim_x, sigma_u_square)
+u_0 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
 if useCuda:
     u_0 = u_0.cuda()
+u_0 = noKnowledgePlayer(u_0)
 
 print(f'mean energy of u_0: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_0))},' [dbm]')
 
 # No access player:
-u_1 = noAccessPlayer(N, batchSize, sysModel, sigma_u_square)
+delta_u, delta_caligraphE = 1e-3, 1e-3
+u_1 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
 if useCuda:
     u_1 = u_1.cuda()
+u_1 = noAccessPlayer(pytorchEstimator.tildeF, pytorchEstimator.K, pytorchEstimator.H, delta_u, delta_caligraphE, Ns_2_2N0_factor, u_1, tilde_e_k_given_k_minus_1) # tilde_e_k_given_k_minus_1 is given only for the window size calculation. It is legit
+
 
 print(f'mean energy of u_1: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_1))},' [dbm]')
 
@@ -80,8 +86,6 @@ x_0_est_f, x_0_est_s = pytorchEstimator(z_0, filterStateInit)
 z_1 = tilde_z + torch.matmul(H_transpose, u_1)
 x_1_est_f, x_1_est_s = pytorchEstimator(z_1, filterStateInit)
 
-tilde_e_k_given_k_minus_1 = tilde_x_est_f - tilde_x # k is the index so that at tilde_e_k_given_k_minus_1[0] we have tilde_e_0_given_minus_1
-tilde_e_k_given_N_minus_1 = tilde_x_est_s - tilde_x
 e_R_0_k_given_k_minus_1 = x_0_est_f - tilde_x
 e_R_1_k_given_k_minus_1 = x_1_est_f - tilde_x
 
@@ -103,6 +107,7 @@ caligraphE_F_1 = caligraphE_F_1.detach().cpu().numpy()
 trace_bar_Sigma = np.trace(pytorchEstimator.theoreticalBarSigma.cpu().numpy())
 trace_bar_Sigma_S = np.trace(pytorchEstimator.theoreticalSmoothingSigma.cpu().numpy())
 
+sigma_u_square = torch.tensor(1/dim_x, dtype=torch.float)
 theoretical_caligraphE_F_0 = trace_bar_Sigma + sigma_u_square.cpu().numpy() * pytorchEstimator.normalizedNoKnowledgePlayerContribution.cpu().numpy()
 
 # plotting batch 0:
