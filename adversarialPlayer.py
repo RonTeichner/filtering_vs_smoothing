@@ -61,6 +61,9 @@ tilde_e_k_given_N_minus_1 = tilde_x_est_s - tilde_x
 
 print(f'mean energy of tilde_x: ',{watt2dbm(calcTimeSeriesMeanEnergy(tilde_x))},' [dbm]')
 
+delta_u, delta_caligraphE = 1e-3, 1e-3
+adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, Ns_2_2N0_factor)
+
 # No knowledge player:
 u_0 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
 if useCuda:
@@ -70,12 +73,10 @@ u_0 = noKnowledgePlayer(u_0)
 print(f'mean energy of u_0: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_0))},' [dbm]')
 
 # No access player:
-delta_u, delta_caligraphE = 1e-3, 1e-3
 u_1 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
 if useCuda:
     u_1 = u_1.cuda()
-u_1 = noAccessPlayer(pytorchEstimator.tildeF, pytorchEstimator.K, pytorchEstimator.H, delta_u, delta_caligraphE, Ns_2_2N0_factor, u_1, tilde_e_k_given_k_minus_1) # tilde_e_k_given_k_minus_1 is given only for the window size calculation. It is legit
-
+u_1 = noAccessPlayer(adversarialPlayersToolbox, u_1, tilde_e_k_given_k_minus_1) # tilde_e_k_given_k_minus_1 is given only for the window size calculation. It is legit
 
 print(f'mean energy of u_1: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_1))},' [dbm]')
 
