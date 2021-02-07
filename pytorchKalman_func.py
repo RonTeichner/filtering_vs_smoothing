@@ -318,7 +318,8 @@ def noKnowledgePlayer(u):
 def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
     # tilde_e_k_given_k_minus_1 should be used only for the window size calculation
     use_cuda = adversarialPlayersToolbox.use_cuda
-    N, batchSize = u.shape[0], u.shape[1]
+    N, batchSize, dim_x = u.shape[0], u.shape[1], u.shape[2]
+
     #Xi_N = compute_Xi_l_N(tildeF, K, H, 0, N)
     #bar_Xi_N = compute_bar_Xi_N(tildeF, K, H, N)
     N_0 = 2 # init value
@@ -327,23 +328,28 @@ def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
         if use_cuda: powerUsedSoFar.cuda()
 
         for j in range(N):
-            # calc with N0 window:
-            Xi_N0, b_N0, alpha_N0 = adversarialPlayersToolbox.noAccessPlayer_optParams(j, N_0, N, powerUsedSoFar, u[max(0,j-N_0):j])
-            u_N0_j_full = adversarialPlayersToolbox.corollary_4_opt(Xi_N0, b_N0, alpha_N0)
-            u_N0_j = u_N0_j_full[0:1]
+            blockVec_u_until_j = u[:j].permute(1, 0, 2, 3).reshape(batchSize, j * dim_x, 1)
 
-            u_full = torch.cat((u[:j], u_N0_j_full), dim=0)
+            # calc with N0 window:
+            J_j_N_N0, b_N0, alpha_N0 = adversarialPlayersToolbox.noAccessPlayer_optParams(j, N_0, N, powerUsedSoFar, u[max(0,j-N_0):j])
+            u_N0_j_full, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N_N0, b_N0, alpha_N0)
+            u_N0_j_full_timeSeries = u_N0_j_full.reshape(batchSize, -1, dim_x, 1).permute(1, 0, 2, 3)
+            u_N0_j = u_N0_j_full_timeSeries[0:1]
+
+            blockVec_u_full = torch.cat((blockVec_u_until_j, u_N0_j_full), dim=1)
+            blockVec_tilde_e_full = tilde_e_k_given_k_minus_1[:j+N_0].permute(1, 0, 2, 3).reshape(batchSize, (j+N_0) * dim_x, 1)
             #caligraphE_N0_j = torch.matmul(torch.transpose(u_full, 2, 3), torch.matmul(Xi_N, u_full)) + 2*torch.matmul(torch.transpose(tilde_e_k_given_k_minus_1, 2, 3), torch.matmul(bar_Xi_N, u_full))
-            caligraphE_N0_j = adversarialPlayersToolbox.compute_caligraphE(u_full)
+            caligraphE_N0_j = adversarialPlayersToolbox.compute_caligraphE(blockVec_u_full, blockVec_tilde_e_full)
 
             # calc with 2N0 window:
-            Xi_2N0, b_2N0, alpha_2N0 = adversarialPlayersToolbox.noAccessPlayer_optParams(j, 2*N_0, N, powerUsedSoFar, u[max(0,j - 2*N_0):j])
-            u_2N0_j_full = adversarialPlayersToolbox.corollary_4_opt(Xi_2N0, b_2N0, alpha_2N0)
-            u_2N0_j = u_2N0_j_full[0:1]
+            J_j_N_2N0, b_2N0, alpha_2N0 = adversarialPlayersToolbox.noAccessPlayer_optParams(j, 2*N_0, N, powerUsedSoFar, u[max(0,j - 2*N_0):j])
+            u_2N0_j_full, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N_2N0, b_2N0, alpha_2N0)
+            u_2N0_j_full_timeSeries = u_2N0_j_full.reshape(batchSize, -1, dim_x, 1).permute(1, 0, 2, 3)
+            u_2N0_j = u_2N0_j_full_timeSeries[0:1]
 
-            u_full = torch.cat((u[:j], u_2N0_j_full), dim=0)
-            #caligraphE_2N0_j = torch.matmul(torch.transpose(u_full, 2, 3), torch.matmul(Xi_N, u_full)) + 2*torch.matmul(torch.transpose(tilde_e_k_given_k_minus_1, 2, 3), torch.matmul(bar_Xi_N, u_full))
-            caligraphE_2N0_j = adversarialPlayersToolbox.compute_caligraphE(u_full)
+            blockVec_u_full = torch.cat((blockVec_u_until_j, u_2N0_j_full), dim=1)
+            blockVec_tilde_e_full = tilde_e_k_given_k_minus_1[:j+2*N_0].permute(1, 0, 2, 3).reshape(batchSize, (j+2*N_0) * dim_x, 1)
+            caligraphE_2N0_j = adversarialPlayersToolbox.compute_caligraphE(blockVec_u_full, blockVec_tilde_e_full)
 
             # test window size:
             if adversarialPlayersToolbox.windowSizeTest(u_N0_j, u_2N0_j, caligraphE_N0_j, caligraphE_2N0_j):
@@ -355,7 +361,7 @@ def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
                 assert N > 2*N_0 + Ns
                 break
 
-        if j == N-1: # end of time-series reached with current window size
+        if (j == N-1) or (j == 2*N_0 + Ns): # end of time-series reached with current window size
             break
     return u
 
@@ -376,7 +382,8 @@ class playersToolbox:
 
         self.compute_Xi_l_N_previous_l, self.compute_Xi_l_N_previous_N = 0, 0
         self.compute_bar_Xi_N_previous_N = 0
-        self.compute_J_N_previous_j, self.compute_J_N_previous_N = 0, 0
+        self.compute_J_j_N_previous_j, self.compute_J_j_N_previous_N = 0, 0
+        self.compute_J_j_N_eig_previous_j, self.compute_J_j_N_eig_previous_N = 0, 0
         self.compute_tildeJ_N0_j_N_previous_N_0, self.compute_tildeJ_N0_j_N_previous_j, self.compute_tildeJ_N0_j_N_previous_N = 0, 0, 0
 
         if self.use_cuda:
@@ -415,15 +422,15 @@ class playersToolbox:
 
             for r in range(N):
                 for c in range(r):
-                    self.bar_Xi_N[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(torch..matrix_power(self.tildeF, r - 1 - c), self.K_HT)
+                    self.bar_Xi_N[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(torch.matrix_power(self.tildeF, r - 1 - c), self.K_HT)
 
         return self.bar_Xi_N
 
-    def compute_J_N(self, j, N):
-        if not(j == self.compute_J_N_previous_j and N == self.compute_J_N_previous_N):
-            self.compute_J_N_previous_j, self.compute_J_N_previous_N = j, N
-            self.J_N = torch.zeros((N-j)*self.dim_x, (N-j)*self.dim_x, dtype=torch.float)
-            if self.use_cuda: self.J_N.cuda()
+    def compute_J_j_N(self, j, N):
+        if not(j == self.compute_J_j_N_previous_j and N == self.compute_J_j_N_previous_N):
+            self.compute_J_j_N_previous_j, self.compute_J_j_N_previous_N = j, N
+            self.J_j_N = torch.zeros((N-j)*self.dim_x, (N-j)*self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.J_j_N.cuda()
 
             for r in range(N-j):
                 for c in range(N-j):
@@ -435,9 +442,9 @@ class playersToolbox:
                         self.summed = self.summed + summedItter
                         if torch.max(torch.abs(summedItter)) < self.thr or k == N-1:
                             break
-                    self.J_N[self.dim_x*r:self.dim_x*(r+1), self.dim_x*c:self.dim_x*(c+1)] = torch.matmul(torch.transpose(self.K_HT, 1, 0), torch.matmul(self.summed, self.K_HT))
+                    self.J_j_N[self.dim_x*r:self.dim_x*(r+1), self.dim_x*c:self.dim_x*(c+1)] = torch.matmul(torch.transpose(self.K_HT, 1, 0), torch.matmul(self.summed, self.K_HT))
 
-        return self.J_N
+        return self.J_j_N
 
     def compute_tildeJ_N0_j_N(self, N_0, j, N):
         if not(N_0 == self.compute_tildeJ_N0_j_N_previous_N_0 and j == self.compute_tildeJ_N0_j_N_previous_j and N == self.compute_tildeJ_N0_j_N_previous_N):
@@ -469,11 +476,14 @@ class playersToolbox:
         return tildeb_1
 
     def compute_lambda_Xi_max(self, enableFigure):
-        lambda_Xi_max = list()
+        lambda_Xi_max, corresponding_eigenvector = list(), list()
         N=0
         while True:
             N += 1
-            lambda_Xi_max.append(np.real(np.linalg.eigvals(self.compute_Xi_l_N(0, N).cpu().numpy())).max())
+            e, v = np.linalg.eig(self.compute_Xi_l_N(0, N).cpu().numpy())
+            maxEigenvalueIndex = np.argmax(np.real(e))
+            lambda_Xi_max.append(np.real(e[maxEigenvalueIndex]))
+            corresponding_eigenvector.append(np.real(v[:, maxEigenvalueIndex]))
             if N > 1000 or (N > 5 and np.abs(watt2dbm(lambda_Xi_max[-1]) - watt2dbm(lambda_Xi_max[-2])) < self.thr_db):
                 break
         if self.use_cuda:
@@ -482,36 +492,112 @@ class playersToolbox:
             self.theoretical_lambda_Xi_N_max = torch.tensor(lambda_Xi_max[-1], dtype=torch.float, requires_grad=False).contiguous()
 
         if enableFigure:
-            plt.plot(np.arange(1, N+1), watt2dbm(lambda_Xi_max))
+            lambda_Xi_max = np.asarray(lambda_Xi_max)
+            eigenvectors = np.zeros((lambda_Xi_max.shape[0], self.dim_x, 1))
+            for i in range(len(corresponding_eigenvector)):
+                eigenvectors[i] = corresponding_eigenvector[i][:self.dim_x][:, None]
+            eigenvectors_energy = np.sum(np.power(eigenvectors, 2), axis=1)
+            delta_eigenvectors_energy = np.sum(np.power(eigenvectors[1:] - eigenvectors[:-1], 2), axis=1)
+            delta_eigenvector_energy_relation = np.divide(delta_eigenvectors_energy, np.sum(np.power(eigenvectors[:-1], 2), axis=1))
+            #delta_eigenvalue_energy = lambda_Xi_max[1:] / lambda_Xi_max[:-1]
+            plt.subplot(3, 1, 1)
+            plt.plot(np.arange(1, N+1), watt2dbm(lambda_Xi_max), label=r'$\lambda^{\Xi_{N}}_{max}$')
             plt.ylabel('dbm')
             plt.xlabel('N')
-            plt.title(r'$\lambda^{\Xi_N}_{max}$')
             plt.grid()
+            plt.legend()
+
+            plt.subplot(3, 1, 2)
+            plt.plot(np.arange(1, N+1), watt2dbm(eigenvectors_energy), label=r'$||{v^{\Xi_{N}}_{max}}||_2^2$')
+            plt.ylabel('dbm')
+            plt.xlabel('N')
+            plt.legend()
+            #plt.title(r'$\lambda^{\Xi_N}_{max}$')
+            plt.grid()
+
+            plt.subplot(3, 1, 3)
+            plt.plot(np.arange(2, N+1), watt2db(delta_eigenvector_energy_relation), label=r'$\frac{||{v^{\Xi_{N+1}}_{max} - v^{\Xi_{N}}_{max}}||_2^2}{||{v^{\Xi_{N+1}}_{max}}||_2^2}$')
+            plt.ylabel('db')
+            plt.xlabel('N')
+            plt.legend()
+            #plt.title(r'$\lambda^{\Xi_N}_{max}$')
+            plt.grid()
+
             plt.show()
 
     def windowSizeTest(self, u_N0_j, u_2N0_j, caligraphE_N0_j, caligraphE_2N0_j):
-        delta_u_condition = torch.max(torch.div(torch.sum(torch.pow(u_N0_j - u_2N0_j, 2), dim=2), torch.sum(torch.pow(u_2N0_j, 2), dim=2))) < self.delta_u
-        delta_caligraphE_condition = torch.max(torch.div(torch.abs(caligraphE_N0_j - caligraphE_2N0_j), torch.abs(caligraphE_2N0_j))) < self.delta_caligraphE
+        delta_u_energy = torch.sum(torch.pow(u_N0_j - u_2N0_j, 2), dim=2)
+        u_energy = torch.sum(torch.pow(u_2N0_j, 2), dim=2)
+        u_violation = torch.max(torch.div(delta_u_energy, u_energy))
+        caligraphE_violation = torch.max(torch.div(torch.abs(caligraphE_N0_j - caligraphE_2N0_j), torch.abs(caligraphE_2N0_j)))
+        print(f'window size test: u violation: {u_violation}; E violation: {caligraphE_violation}')
+        print(f'u_2N0_j/u_N0_j: {torch.div(u_2N0_j, u_N0_j)}')
+        delta_u_condition = u_violation < self.delta_u
+        delta_caligraphE_condition = caligraphE_violation < self.delta_caligraphE
         return delta_u_condition and delta_caligraphE_condition
 
     def noAccessPlayer_optParams(self, j, N_0, N, powerUsedSoFar, relevant_u):
         nSamples, batchSize, dim_x = relevant_u.shape[0], relevant_u.shape[1], relevant_u.shape[2]
         blockVec_u = relevant_u.permute(1, 0, 2, 3).reshape(batchSize, nSamples*dim_x, 1)
         if j < N_0:
-            Xi = self.compute_J_N(j, j + N_0)
+            J_j_N = self.compute_J_j_N(j, j + N_0)
+            J_j_N_param_j, J_j_N_param_N = j, j + N_0
             b = self.compute_tildeb_1(blockVec_u, j, j, j + N_0)
             alpha = j + N_0 - powerUsedSoFar
         elif j <= N - N_0:
-            Xi = self.compute_J_N(j, j + N_0)
+            J_j_N = self.compute_J_j_N(j, j + N_0)
+            J_j_N_param_j, J_j_N_param_N = j, j + N_0
             b = self.compute_tildeb_1(blockVec_u, N_0, j, j + N_0)
             alpha = j + N_0 - powerUsedSoFar
         else:
-            Xi = self.compute_J_N(j, N)
+            J_j_N = self.compute_J_j_N(j, N)
+            J_j_N_param_j, J_j_N_param_N = j, N
             b = self.compute_tildeb_1(blockVec_u, N_0, j, N)
             alpha = N - powerUsedSoFar
-        return Xi, b, alpha
+        return (J_j_N, J_j_N_param_j, J_j_N_param_N), b, alpha
 
-    def corollary_4_opt(Xi, tilde_b, alpha):
+    def compute_J_j_N_eigenvalues(self, j, N):
+        if not (j == self.compute_J_j_N_eig_previous_j and N == self.compute_J_j_N_eig_previous_N):
+            self.compute_J_j_N_eig_previous_j, self.compute_J_j_N_eig_previous_N = j, N
+            if self.use_cuda:
+                self.J_j_N_eig = torch.symeig(self.compute_J_j_N(j, N), eigenvectors=True).cuda()
+            else:
+                self.J_j_N_eig = torch.symeig(self.compute_J_j_N(j, N), eigenvectors=True)
+        return self.J_j_N_eig
+
+
+    def corollary_4_opt(self, J_j_N, tilde_b, alpha):
+        batchSize, N = alpha.shape[0], J_j_N[0].shape[0]
         b = -tilde_b
-        A = -1/torch.sqrt(alpha)
-        return u
+        J_j_N_eig = self.compute_J_j_N_eigenvalues(J_j_N[1], J_j_N[2])
+
+        if self.use_cuda:
+            x = torch.zeros(N, 1, dtype=torch.float).cuda()
+            u = torch.zeros(batchSize, N, 1, dtype=torch.float).cuda()
+            lambda_star = torch.zeros(batchSize).cuda()
+        else:
+            x = torch.zeros(N, 1, dtype=torch.float)
+            u = torch.zeros(batchSize, N, 1, dtype=torch.float)
+            lambda_star = torch.zeros(batchSize)
+
+        for batchIndex in range(batchSize):
+            eigenvalues_A, eigenvectors_A = -torch.div(J_j_N_eig[0], torch.sqrt(alpha[batchIndex])), J_j_N_eig[1]
+            # columns of eigenvectors_A are the eigenvectors
+            lambda_min_A = eigenvalues_A[-1]
+            if b.shape[1] == 0: # pure qudratic
+                lambda_star[batchIndex] = lambda_min_A
+                if lambda_star[batchIndex] >= 0:
+                    x.fill_(0)
+                else:
+                    x = eigenvectors_A[:, -1][:, None]
+            else:
+                eigenvectors_A_dot_b = torch.pow(torch.matmul(torch.transpose(eigenvectors_A, 1, 0), b[batchIndex]), 2)
+
+            u[batchIndex] = torch.div(x, torch.sqrt(alpha[batchIndex]))
+
+        return u, lambda_star
+
+    def compute_caligraphE(self, u_N, tilde_e_N):
+        N = int(u_N.shape[1]/self.dim_x)
+        Xi_N, bar_Xi_N = self.compute_Xi_l_N(0, N), self.compute_bar_Xi_N(N)
+        return torch.div(torch.matmul(torch.transpose(u_N, 1, 2), torch.matmul(Xi_N, u_N)) + 2*torch.matmul(torch.transpose(tilde_e_N, 1, 2), torch.matmul(bar_Xi_N, u_N)), N)

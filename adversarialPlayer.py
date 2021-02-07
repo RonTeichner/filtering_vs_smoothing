@@ -14,9 +14,9 @@ import time
 #np.random.seed(13)
 
 dim_x, dim_z = 5, 3
-N = 1000  # time steps
+N = 100000  # time steps
 Ns_2_2N0_factor = 100
-batchSize = 7
+batchSize = 1
 useCuda = False
 
 # create a single system model:
