@@ -40,8 +40,12 @@ def GenMeasurements(N, batchSize, sysModel):
     processNoises = np.matmul(np.linalg.cholesky(Q), np.random.randn(N, batchSize, dim_x, 1))
     measurementNoises = np.matmul(np.linalg.cholesky(R), np.random.randn(N, batchSize, dim_z, 1))
 
+    print(f'amount of energy into the system is {watt2dbm(np.sum(np.power(np.linalg.norm(processNoises[:,0]), 2)))} dbm')
+
     for i in range(1, N):
         x[i] = np.matmul(F, x[i - 1]) + processNoises[i - 1]
+
+    print(f'amount of energy out from the system is {watt2dbm(np.sum(np.power(np.linalg.norm(x[:,0]), 2)))} dbm')
 
     z = np.matmul(H.transpose(), x) + measurementNoises
 
@@ -200,7 +204,7 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         else:
             hat_x_k_plus_1_given_k = torch.zeros(N, batchSize, self.dim_x, 1, dtype=torch.float, requires_grad=False)  #  hat_x_k_plus_1_given_k is in index [k+1]            
 
-        hat_x_k_plus_1_given_k[0] = filterStateInit[0]
+        hat_x_k_plus_1_given_k[0] = filterStateInit
 
         hat_x_k_plus_1_given_k[1] = torch.matmul(self.tildeF, hat_x_k_plus_1_given_k[0]) + torch.matmul(self.K, z[0])
         K_dot_z = torch.matmul(self.K, z)

@@ -11,7 +11,7 @@ import torch.optim as optim
 import pickle
 import time
 
-#np.random.seed(13)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
+#  np.random.seed(13)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
 dim_x, dim_z = 5, 3
 N = 100  # time steps
@@ -37,7 +37,7 @@ if useCuda:
 filter_P_init = np.repeat(np.eye(dim_x)[None, None, :, :], batchSize, axis=1)  # filter @ time-series but all filters have the same init
 filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.random.randn(dim_x, 1))
 filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False).contiguous()
-#filterStateInit = tilde_x[0]
+filterStateInit = tilde_x[0]
 
 if useCuda:
     filterStateInit = filterStateInit.cuda()
@@ -153,7 +153,7 @@ minY_absolute = np.min((watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_
 maxY_absolute = np.max((watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))
 
 marginAbsolute = 1 # db
-plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
+#plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
 plt.legend()
 plt.ylabel('dbm')
 plt.grid()
@@ -173,7 +173,7 @@ maxY_relative = np.max((watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus
 marginRelative = 1
 plt.legend()
 plt.ylabel('db')
-plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
+#plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
 plt.grid()
 
 plt.subplot(2, 2, 2)
@@ -190,7 +190,7 @@ plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(cal
 
 plt.legend()
 plt.ylabel('dbm')
-plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
+#plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
 plt.grid()
 
 plt.subplot(2, 2, 4)
@@ -204,7 +204,7 @@ plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(cal
 
 plt.legend()
 plt.ylabel('db')
-plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
+#plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
 plt.grid()
 
 plt.show()
