@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 #from __future__ import print_function
 #from __future__ import division
-from analyticResults_func import watt2db, volt2dbm, watt2dbm, calc_tildeB, calc_tildeC
+from analyticResults_func import watt2db, volt2dbm, watt2dbm, calc_tildeB, calc_tildeC, calcDeltaR
 
 
 def GenSysModel(dim_x, dim_z):
@@ -24,7 +24,7 @@ def GenSysModel(dim_x, dim_z):
     H = np.random.randn(dim_x, dim_z)
     H = H/np.linalg.norm(H)
 
-    processNoiseVar, measurementNoiseVar = 1/dim_x, 1/dim_x
+    processNoiseVar, measurementNoiseVar = 1/dim_x, 1/dim_z
     Q = processNoiseVar * np.eye(dim_x)
     R = measurementNoiseVar * np.eye(dim_z)
     return {"F": F, "H": H, "Q": Q, "R": R}
@@ -152,6 +152,8 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         theoreticalSmoothingSigma = theoreticalBarSigma - theoreticalSmoothingFilteringDiff
 
         A_N = solve_discrete_lyapunov(a=tildeF, q=np.eye(self.dim_x))
+        A_N_directSum = calcDeltaR(a=tildeF, q=np.eye(self.dim_x))
+        assert np.abs(A_N_directSum - A_N).max() < 1e-5
         normalizedNoKnowledgePlayerContribution = np.trace(np.matmul(np.dot(H, np.transpose(K)), np.matmul(np.transpose(A_N), np.dot(K, np.transpose(H)))))
 
         smootherRecursiveGain = np.matmul(theoreticalBarSigma, np.matmul(np.transpose(tildeF), np.linalg.inv(theoreticalBarSigma)))
@@ -350,7 +352,7 @@ def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
             alpha = Ni * torch.ones(batchSize, dtype=torch.float)
 
         u_Ni_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_0_Ni, tilde_b=tilde_b, alpha=alpha)
-        caligraphE_Ni[:, Ni-1:Ni] = adversarialPlayersToolbox.compute_caligraphE(u_Ni_blockVec, blockVec_tilde_e_full)
+        caligraphE_Ni[:, Ni-1:Ni], _, _, _ = adversarialPlayersToolbox.compute_caligraphE(u_Ni_blockVec, blockVec_tilde_e_full)
 
     u[:N] = u_Ni_blockVec.reshape(batchSize, N, dim_x, 1).permute(1, 0, 2, 3)
     if enableCalculateForAllWindows:
@@ -364,7 +366,7 @@ def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
     return u, caligraphE_Ni
 
 class playersToolbox:
-    def __init__(self, pytorchEstimator, delta_u, delta_caligraphE, Ns_2_2N0_factor):
+    def __init__(self, pytorchEstimator, delta_u, delta_caligraphE, enableNoAccessPlayer, Ns_2_2N0_factor):
         self.tildeF = pytorchEstimator.tildeF
         self.K = pytorchEstimator.K
         self.H = pytorchEstimator.H
@@ -391,7 +393,8 @@ class playersToolbox:
             self.thr_db.cuda()
             self.thr.cuda()
 
-        self.compute_lambda_Xi_max(enableFigure=True)
+        if enableNoAccessPlayer:
+            self.compute_lambda_Xi_max(enableFigure=True)
 
     def compute_Xi_l_N(self, l, N):
         if not(l == self.compute_Xi_l_N_previous_l and N == self.compute_Xi_l_N_previous_N):
@@ -651,10 +654,7 @@ class playersToolbox:
     def compute_J_j_N_eigenvalues(self, j, N):
         if not (j == self.compute_J_j_N_eig_previous_j and N == self.compute_J_j_N_eig_previous_N):
             self.compute_J_j_N_eig_previous_j, self.compute_J_j_N_eig_previous_N = j, N
-            if self.use_cuda:
-                self.J_j_N_eig = torch.symeig(self.compute_J_j_N(j, N), eigenvectors=True).cuda()
-            else:
-                self.J_j_N_eig = torch.symeig(self.compute_J_j_N(j, N), eigenvectors=True)
+            self.J_j_N_eig = torch.symeig(self.compute_J_j_N(j, N), eigenvectors=True)
         return self.J_j_N_eig
 
 
@@ -672,6 +672,7 @@ class playersToolbox:
             u = torch.zeros(batchSize, N, 1, dtype=torch.float)
             lambda_star = torch.zeros(batchSize)
 
+        identicalBatches = (alpha.var() == 0)
         for batchIndex in range(batchSize):
             eigenvalues_A, eigenvectors_A = -torch.multiply(J_j_N_eig[0], torch.sqrt(alpha[batchIndex])), J_j_N_eig[1]
             # columns of eigenvectors_A are the eigenvectors
@@ -687,6 +688,10 @@ class playersToolbox:
 
             u[batchIndex] = torch.multiply(x, torch.sqrt(alpha[batchIndex]))
 
+            if identicalBatches:
+                u[1:] = u[0]
+                break
+
         return u, lambda_star
 
     def compute_caligraphE(self, u_N, tilde_e_N):
@@ -695,4 +700,4 @@ class playersToolbox:
         quadraticPart = torch.matmul(torch.transpose(u_N, 1, 2), torch.matmul(Xi_N, u_N))
         linearPart = 2*torch.matmul(torch.transpose(tilde_e_N, 1, 2), torch.matmul(bar_Xi_N, u_N))
         noPlayerPart = torch.matmul(torch.transpose(tilde_e_N, 1, 2), tilde_e_N)
-        return torch.div(noPlayerPart + quadraticPart + linearPart, N)
+        return torch.div(noPlayerPart + quadraticPart + linearPart, N), torch.div(linearPart, N), torch.div(noPlayerPart, N), torch.div(quadraticPart, N)
