@@ -306,9 +306,9 @@ def calcTimeSeriesMeanEnergy(x):
     return torch.mean(torch.sum(torch.pow(x, 2), dim=2), dim=0)
 
 def calcTimeSeriesMeanEnergyRunningAvg(x):
-    norm_x = torch.sum(torch.pow(x, 2), dim=2)
-    cumsum_norm_x = torch.cumsum(norm_x, dim=0)
-    return torch.div(cumsum_norm_x, torch.cumsum(torch.ones_like(cumsum_norm_x), dim=0))
+    square_norm_x = torch.sum(torch.pow(x, 2), dim=2)
+    cumsum_square_norm_x = torch.cumsum(square_norm_x, dim=0)
+    return torch.div(cumsum_square_norm_x, torch.cumsum(torch.ones_like(cumsum_square_norm_x), dim=0))
 
 def noKnowledgePlayer(u):
     dim_x = u.shape[2]
@@ -320,56 +320,51 @@ def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
     use_cuda = adversarialPlayersToolbox.use_cuda
     N, batchSize, dim_x = u.shape[0], u.shape[1], u.shape[2]
 
-    #Xi_N = compute_Xi_l_N(tildeF, K, H, 0, N)
-    #bar_Xi_N = compute_bar_Xi_N(tildeF, K, H, N)
-    N_0 = 2 # init value
-    while True:
-        powerUsedSoFar = torch.zeros(batchSize)
-        if use_cuda: powerUsedSoFar.cuda()
+    if use_cuda:
+        caligraphE_Ni = torch.zeros(batchSize, N, 1, dtype=torch.float).cuda()
+    else:
+        caligraphE_Ni = torch.zeros(batchSize, N, 1, dtype=torch.float)
 
-        for j in range(N):
-            blockVec_u_until_j = u[:j].permute(1, 0, 2, 3).reshape(batchSize, j * dim_x, 1)
+    enableCalculateForAllWindows = False
+    if enableCalculateForAllWindows:
+        startWindowLength = 1
+    else:
+        startWindowLength = N
 
-            # calc with N0 window:
-            J_j_N_N0, b_N0, alpha_N0 = adversarialPlayersToolbox.noAccessPlayer_optParams(j, N_0, N, powerUsedSoFar, u[max(0,j-N_0):j])
-            u_N0_j_full, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N_N0, b_N0, alpha_N0)
-            u_N0_j_full_timeSeries = u_N0_j_full.reshape(batchSize, -1, dim_x, 1).permute(1, 0, 2, 3)
-            u_N0_j = u_N0_j_full_timeSeries[0:1]
+    for Ni in range(startWindowLength,N+1):
+        print(f'adversarial no access player {Ni} out of {N}')
+        blockVec_tilde_e_full = tilde_e_k_given_k_minus_1[:Ni].permute(1, 0, 2, 3).reshape(batchSize, Ni * dim_x, 1)
 
-            blockVec_u_full = torch.cat((blockVec_u_until_j, u_N0_j_full), dim=1)
-            blockVec_tilde_e_full = tilde_e_k_given_k_minus_1[:j+N_0].permute(1, 0, 2, 3).reshape(batchSize, (j+N_0) * dim_x, 1)
-            #caligraphE_N0_j = torch.matmul(torch.transpose(u_full, 2, 3), torch.matmul(Xi_N, u_full)) + 2*torch.matmul(torch.transpose(tilde_e_k_given_k_minus_1, 2, 3), torch.matmul(bar_Xi_N, u_full))
-            caligraphE_N0_j = adversarialPlayersToolbox.compute_caligraphE(blockVec_u_full, blockVec_tilde_e_full)
+        Xi_Ni = adversarialPlayersToolbox.compute_Xi_l_N(0, Ni)
+        # note that J_0_N = Xi_N
+        J_0_Ni = (Xi_Ni, 0, Ni)
+        if use_cuda:
+            tilde_b = torch.zeros(batchSize, Ni, 1, dtype=torch.float).cuda()
+            alpha = Ni * torch.ones(batchSize, dtype=torch.float).cuda()
+        else:
+            tilde_b = torch.zeros(batchSize, Ni, 1, dtype=torch.float)
+            alpha = Ni * torch.ones(batchSize, dtype=torch.float)
 
-            # calc with 2N0 window:
-            J_j_N_2N0, b_2N0, alpha_2N0 = adversarialPlayersToolbox.noAccessPlayer_optParams(j, 2*N_0, N, powerUsedSoFar, u[max(0,j - 2*N_0):j])
-            u_2N0_j_full, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N_2N0, b_2N0, alpha_2N0)
-            u_2N0_j_full_timeSeries = u_2N0_j_full.reshape(batchSize, -1, dim_x, 1).permute(1, 0, 2, 3)
-            u_2N0_j = u_2N0_j_full_timeSeries[0:1]
+        u_Ni_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_0_Ni, tilde_b=tilde_b, alpha=alpha)
+        caligraphE_Ni[:, Ni-1:Ni] = adversarialPlayersToolbox.compute_caligraphE(u_Ni_blockVec, blockVec_tilde_e_full)
 
-            blockVec_u_full = torch.cat((blockVec_u_until_j, u_2N0_j_full), dim=1)
-            blockVec_tilde_e_full = tilde_e_k_given_k_minus_1[:j+2*N_0].permute(1, 0, 2, 3).reshape(batchSize, (j+2*N_0) * dim_x, 1)
-            caligraphE_2N0_j = adversarialPlayersToolbox.compute_caligraphE(blockVec_u_full, blockVec_tilde_e_full)
+    u[:N] = u_Ni_blockVec.reshape(batchSize, N, dim_x, 1).permute(1, 0, 2, 3)
+    if enableCalculateForAllWindows:
+        plt.figure()
+        plt.plot(np.arange(1, N+1), watt2dbm(caligraphE_Ni.cpu().numpy()[0, :, 0]), label=r'empirical ${\cal E}^{(1)}_{F,N}$')
+        plt.xlabel('N')
+        plt.ylabel('dbm')
+        plt.legend()
+        plt.grid()
 
-            # test window size:
-            if adversarialPlayersToolbox.windowSizeTest(u_N0_j, u_2N0_j, caligraphE_N0_j, caligraphE_2N0_j):
-                u[j] = u_N0_j
-                powerUsedSoFar += torch.sum(torch.pow(u[j], 2), dim=2)
-            else:
-                N_0 = 2*N_0
-                Ns = adversarialPlayersToolbox.Ns_2_2N0_factor * 2*N_0
-                assert N > 2*N_0 + Ns
-                break
-
-        if (j == N-1) or (j == 2*N_0 + Ns): # end of time-series reached with current window size
-            break
-    return u
+    return u, caligraphE_Ni
 
 class playersToolbox:
     def __init__(self, pytorchEstimator, delta_u, delta_caligraphE, Ns_2_2N0_factor):
         self.tildeF = pytorchEstimator.tildeF
         self.K = pytorchEstimator.K
         self.H = pytorchEstimator.H
+        self.f = pytorchEstimator
         self.dim_x = self.tildeF.shape[0]
         self.delta_u, self.delta_caligraphE, self.Ns_2_2N0_factor = delta_u, delta_caligraphE, Ns_2_2N0_factor
         self.use_cuda = self.tildeF.is_cuda
@@ -614,8 +609,7 @@ class playersToolbox:
 
                 plt.subplots_adjust(hspace=0.5)
 
-            plt.show()
-            x=3
+            #plt.show()
 
     def windowSizeTest(self, u_N0_j, u_2N0_j, caligraphE_N0_j, caligraphE_2N0_j, alpha_over_N_0, alpha_over_2N_0):
         delta_u_energy = torch.sum(torch.pow(u_N0_j - u_2N0_j, 2), dim=2)
@@ -627,7 +621,8 @@ class playersToolbox:
         #print(f'u_2N0_j/u_N0_j: {torch.div(u_2N0_j, u_N0_j)}')
         delta_u_condition = np.min((u_delta_violation.item(), np.max((u_N_0_violation.item(), u_2N_0_violation.item())))) < self.delta_u
         delta_caligraphE_condition = caligraphE_violation < self.delta_caligraphE
-        return delta_u_condition and delta_caligraphE_condition
+        #return delta_u_condition and delta_caligraphE_condition
+        return delta_caligraphE_condition
 
     def noAccessPlayer_optParams(self, j, N_0, N, powerUsedSoFar, relevant_u):
         nSamples, batchSize, dim_x = relevant_u.shape[0], relevant_u.shape[1], relevant_u.shape[2]
@@ -674,10 +669,10 @@ class playersToolbox:
             lambda_star = torch.zeros(batchSize)
 
         for batchIndex in range(batchSize):
-            eigenvalues_A, eigenvectors_A = -torch.div(J_j_N_eig[0], torch.sqrt(alpha[batchIndex])), J_j_N_eig[1]
+            eigenvalues_A, eigenvectors_A = -torch.multiply(J_j_N_eig[0], torch.sqrt(alpha[batchIndex])), J_j_N_eig[1]
             # columns of eigenvectors_A are the eigenvectors
             lambda_min_A = eigenvalues_A[-1]
-            if b.shape[1] == 0: # pure qudratic
+            if torch.max(torch.abs(b)) == 0: # pure qudratic
                 lambda_star[batchIndex] = lambda_min_A
                 if lambda_star[batchIndex] >= 0:
                     x.fill_(0)
@@ -686,11 +681,14 @@ class playersToolbox:
             else:
                 eigenvectors_A_dot_b = torch.pow(torch.matmul(torch.transpose(eigenvectors_A, 1, 0), b[batchIndex]), 2)
 
-            u[batchIndex] = torch.div(x, torch.sqrt(alpha[batchIndex]))
+            u[batchIndex] = torch.multiply(x, torch.sqrt(alpha[batchIndex]))
 
         return u, lambda_star
 
     def compute_caligraphE(self, u_N, tilde_e_N):
         N = int(u_N.shape[1]/self.dim_x)
         Xi_N, bar_Xi_N = self.compute_Xi_l_N(0, N), self.compute_bar_Xi_N(N)
-        return torch.div(torch.matmul(torch.transpose(u_N, 1, 2), torch.matmul(Xi_N, u_N)) + 2*torch.matmul(torch.transpose(tilde_e_N, 1, 2), torch.matmul(bar_Xi_N, u_N)), N)
+        quadraticPart = torch.matmul(torch.transpose(u_N, 1, 2), torch.matmul(Xi_N, u_N))
+        linearPart = 2*torch.matmul(torch.transpose(tilde_e_N, 1, 2), torch.matmul(bar_Xi_N, u_N))
+        noPlayerPart = torch.matmul(torch.transpose(tilde_e_N, 1, 2), tilde_e_N)
+        return torch.div(noPlayerPart + quadraticPart + linearPart, N)
