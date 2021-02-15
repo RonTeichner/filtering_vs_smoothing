@@ -121,7 +121,7 @@ theoretical_caligraphE_F_0 = trace_bar_Sigma + sigma_u_square.cpu().numpy() * py
 theoretical_caligraphE_F_0_quadraticPart = sigma_u_square.cpu().numpy() * pytorchEstimator.normalizedNoKnowledgePlayerContribution.cpu().numpy()
 
 enableDirctCalcsOnBlockVecs = False
-if enableDirctCalcsOnBlockVecs:
+if enableDirctCalcsOnBlockVecs:  # this shows that the gap for E(1) is legit
     # no knowledge player calculation directly from block vectors:
     # no knowledge player expected gap between theoretical and empirical:
     blockVec_tilde_e_full = tilde_e_k_given_k_minus_1.permute(1, 0, 2, 3).reshape(batchSize, N * dim_x, 1)
@@ -136,6 +136,7 @@ if enableDirctCalcsOnBlockVecs:
 
 if enableNoAccessPlayer:
     theoretical_caligraphE_F_1 = trace_bar_Sigma + adversarialPlayersToolbox.theoretical_lambda_Xi_N_max.cpu().numpy()
+    theoretical_upper_bound = trace_bar_Sigma + adversarialPlayersToolbox.theoretical_lambda_Xi_N_max.cpu().numpy() + 2*np.sqrt(adversarialPlayersToolbox.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max.cpu().numpy()*trace_bar_Sigma)
 
 # plotting batch 0:
 
@@ -166,21 +167,23 @@ plt.figure(figsize=(16,8))
 plt.subplot(2, 2, 1)
 plt.title('Absolute performance of players, specific game')
 
+plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)), 'k--', label = r'theoretical upper bound')
+
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_minus_1_b), 'g', label = r'empirical ${\cal E}^{(-1)}_{F,k}$')
-plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_F_minus_1_b)), 'g--', label = r'theoretical $\operatorname{tr}\{\bar{\Sigma}\}$')
+plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'g--', label = r'theoretical $\operatorname{tr}\{\bar{\Sigma}\}$')
 
 #plt.plot(caligraphE_tVec, watt2dbm(caligraphE_S_minus_1_b), label = r'empirical ${\cal E}^{(-1)}_{S,k}$')
 #plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma_S * np.ones_like(caligraphE_S_minus_1_b)), '--', label = r'theoretical $\operatorname{tr}\{\bar{\Sigma}^S\}$')
 
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_b), 'b', label = r'empirical ${\cal E}^{(0)}_{F,k}$')
-plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_F_0_b)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
 if enableNoAccessPlayer:
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_b), 'r', label = r'empirical ${\cal E}^{(1)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_F_1_b)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
-    minY_absolute = np.min((watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))
-    maxY_absolute = np.max((watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))
+    minY_absolute = np.min((watt2dbm(theoretical_upper_bound), np.min((watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))))
+    maxY_absolute = np.max((watt2dbm(theoretical_upper_bound), np.max((watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))))
 
 marginAbsolute = 1 # db
 if enableNoAccessPlayer: plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
@@ -192,15 +195,17 @@ plt.grid()
 plt.subplot(2, 2, 3)
 plt.title('Players performance w.r.t pure filter, specific game')
 
+plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label = r'theoretical upper bound')
+
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), 'b', label = r'empirical ${\cal E}^{(0)}_{F,k}$')
-plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_F_0_b)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_F_minus_1_b)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
 if enableNoAccessPlayer:
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b), 'r', label = r'empirical ${\cal E}^{(1)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_F_1_b)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_F_minus_1_b)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
-    minY_relative = np.min((watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
-    maxY_relative = np.max((watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
+    minY_relative = np.min((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
+    maxY_relative = np.max((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
 
 marginRelative = 1
 plt.legend()
@@ -211,15 +216,17 @@ plt.grid()
 plt.subplot(2, 2, 2)
 plt.title('Absolute mean performance of players')
 
+plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)), 'k--', label = r'theoretical upper bound')
+
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_minus_1_mean), 'g', label = r'empirical ${\cal E}^{(-1)}_{F,k}$')
-plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_F_minus_1_mean)), 'g--', label = r'theoretical $\operatorname{tr}\{\bar{\Sigma}\}$')
+plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'g--', label = r'theoretical $\operatorname{tr}\{\bar{\Sigma}\}$')
 
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean), 'b', label = r'empirical ${\cal E}^{(0)}_{F,k}$')
-plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_F_0_mean)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
 if enableNoAccessPlayer:
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean), 'r', label = r'empirical ${\cal E}^{(1)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_F_1_mean)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
 plt.legend()
 plt.ylabel('dbm')
@@ -229,12 +236,14 @@ plt.grid()
 plt.subplot(2, 2, 4)
 plt.title('Players mean performance w.r.t pure filter')
 
+plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)), 'k--', label = r'theoretical upper bound')
+
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'b', label = r'empirical ${\cal E}^{(0)}_{F,k}$')
-plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_F_0_mean)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_F_minus_1_mean)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
 if enableNoAccessPlayer:
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'r', label = r'empirical ${\cal E}^{(1)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_F_1_mean)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_F_minus_1_mean)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
 plt.legend()
 plt.ylabel('db')

@@ -383,6 +383,7 @@ class playersToolbox:
 
         self.compute_Xi_l_N_previous_l, self.compute_Xi_l_N_previous_N = 0, 0
         self.compute_bar_Xi_N_previous_N = 0
+        self.compute_bar_Xi_N_bar_Xi_N_transpose_previous = 0
         self.compute_J_j_N_previous_j, self.compute_J_j_N_previous_N = 0, 0
         self.compute_J_j_N_eig_previous_j, self.compute_J_j_N_eig_previous_N = 0, 0
         self.compute_tildeJ_N0_j_N_previous_N_0, self.compute_tildeJ_N0_j_N_previous_j, self.compute_tildeJ_N0_j_N_previous_N = 0, 0, 0
@@ -395,6 +396,7 @@ class playersToolbox:
 
         if enableNoAccessPlayer:
             self.compute_lambda_Xi_max(enableFigure=True)
+            self.compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(enableFigure=True)
 
     def compute_Xi_l_N(self, l, N):
         if not(l == self.compute_Xi_l_N_previous_l and N == self.compute_Xi_l_N_previous_N):
@@ -433,6 +435,13 @@ class playersToolbox:
                     self.bar_Xi_N[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(torch.matrix_power(self.tildeF, r - 1 - c), self.K_HT)
 
         return self.bar_Xi_N
+
+    def compute_bar_Xi_N_bar_Xi_N_transpose(self, N):
+        if not(N == self.compute_bar_Xi_N_bar_Xi_N_transpose_previous):
+            self.compute_bar_Xi_N_bar_Xi_N_transpose_previous = N
+            self.bar_Xi_N_bar_Xi_N_transpose = torch.matmul(self.compute_bar_Xi_N(N), torch.transpose(self.compute_bar_Xi_N(N), 1, 0))
+        return self.bar_Xi_N_bar_Xi_N_transpose
+
 
     def compute_J_j_N(self, j, N):
         if not(j == self.compute_J_j_N_previous_j and N == self.compute_J_j_N_previous_N):
@@ -493,6 +502,40 @@ class playersToolbox:
             tildeb_1 = torch.matmul(torch.transpose(tildeJ_N0_j_N, 1, 0), blockVec_u)
         return tildeb_1
 
+    def compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(self, enableFigure):
+        lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, corresponding_eigenvector = list(), list()
+        u_0 = np.zeros((1000, self.dim_x, 1))
+        N = 0
+        while True:
+            N += 1
+            e, v = np.linalg.eig(self.compute_bar_Xi_N_bar_Xi_N_transpose(N).cpu().numpy())
+            maxEigenvalueIndex = np.argmax(np.real(e))
+            lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max.append(np.real(e[maxEigenvalueIndex]))
+            corresponding_eigenvector.append(np.sqrt(N) * np.real(v[:, maxEigenvalueIndex]))
+            u_0[N - 1] = corresponding_eigenvector[N - 1][:self.dim_x][:, None]
+            if N > 20:
+                stepsDiff = 1  # int(N/2)
+                print(f'{N}')
+                if N >= 100 or \
+                        (N > 20 and self.windowSizeTest(
+                            torch.tensor(u_0[N - 1 - stepsDiff][None, None, :, :], dtype=torch.float),
+                            torch.tensor(u_0[N - 1][None, None, :, :], dtype=torch.float),
+                            torch.tensor(lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max[-1 - stepsDiff], dtype=torch.float),
+                            torch.tensor(lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max[-1], dtype=torch.float)
+                            , 1, 1)):
+                    break
+
+        if self.use_cuda:
+            self.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max = torch.tensor(lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max[-1], dtype=torch.float, requires_grad=False).contiguous().cuda()
+        else:
+            self.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max = torch.tensor(lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max[-1], dtype=torch.float, requires_grad=False).contiguous()
+
+        u_0 = u_0[:N]
+
+        if enableFigure:
+            self.lambda_max_figures(lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, u_0, N, corresponding_eigenvector, [r'$\lambda^{\bar{\Xi}_{N}{\bar{\Xi}_{N}}''}_{max}$', r'$\frac{\lambda^{\bar{\Xi}_{N+1}{\bar{\Xi}_{N+1}}''}_{max}}{\lambda^{\bar{\Xi}_{N}{\bar{\Xi}_{N}}''}_{max}}$'])
+
+
     def compute_lambda_Xi_max(self, enableFigure):
         lambda_Xi_max, corresponding_eigenvector = list(), list()
         u_0 = np.zeros((1000, self.dim_x, 1))
@@ -512,9 +555,12 @@ class playersToolbox:
                 #print(f'N = {N}: lambda diff: {lambda_diff_db} db, u_0 diff: {u_0_diff_db} db')
                 print(f'{N}')
                 if N >= 100 or \
-                        (N > 20 and self.windowSizeTest(torch.tensor(u_0[N-1-stepsDiff][None, None, :, :], dtype=torch.float), torch.tensor(u_0[N-1][None, None, :, :], dtype=torch.float),
-                                                        torch.tensor(lambda_Xi_max[-1-stepsDiff], dtype=torch.float), torch.tensor(lambda_Xi_max[-1], dtype=torch.float)
-                                                        , 1, 1)):
+                        (N > 20 and self.windowSizeTest(
+                            torch.tensor(u_0[N - 1 - stepsDiff][None, None, :, :], dtype=torch.float),
+                            torch.tensor(u_0[N - 1][None, None, :, :], dtype=torch.float),
+                            torch.tensor(lambda_Xi_max[-1 - stepsDiff], dtype=torch.float),
+                            torch.tensor(lambda_Xi_max[-1], dtype=torch.float)
+                            , 1, 1)):
                     break
         if self.use_cuda:
             self.theoretical_lambda_Xi_N_max = torch.tensor(lambda_Xi_max[-1], dtype=torch.float, requires_grad=False).contiguous().cuda()
@@ -524,99 +570,108 @@ class playersToolbox:
         u_0 = u_0[:N]
 
         if enableFigure:
-            lambda_Xi_max = np.asarray(lambda_Xi_max)
-            lambda_Xi_max_relation = np.divide(lambda_Xi_max[1:], lambda_Xi_max[:-1])
-            #u_0 = np.zeros((lambda_Xi_max.shape[0], self.dim_x, 1))
-            #for i in range(len(corresponding_eigenvector)):
-                #u_0[i] = corresponding_eigenvector[i][:self.dim_x][:, None]
-                #print(f'square norm of eigenvector for {i+1} time steps: {np.power(np.linalg.norm(corresponding_eigenvector[i]), 2)}')
-            eigenvectors_energy = np.sum(np.power(u_0, 2), axis=1)
-            if self.dim_x == 2:
-                eigenvectors_angle_deg = np.arctan2(u_0[:,1], u_0[:,0]) / np.pi * 180
-            eigenvectors_energy_relation = np.divide(eigenvectors_energy[1:], eigenvectors_energy[:-1])
-            #delta_eigenvectors_energy = np.sum(np.power(eigenvectors[1:] - eigenvectors[:-1], 2), axis=1)
-            #delta_eigenvector_energy_relation = np.divide(delta_eigenvectors_energy, np.sum(np.power(eigenvectors[:-1], 2), axis=1))
-            #delta_eigenvalue_energy = lambda_Xi_max[1:] / lambda_Xi_max[:-1]
+            self.lambda_max_figures(lambda_Xi_max, u_0, N, corresponding_eigenvector, [r'$\lambda^{\Xi_{N}}_{max}$', r'$\frac{\lambda^{\Xi_{N+1}}_{max}}{\lambda^{\Xi_{N}}_{max}}$'])
 
-            plt.figure(figsize=(12, 4))
-            plt.subplot(2, 2, 1)
-            plt.plot(np.arange(1, N+1), watt2dbm(lambda_Xi_max), label=r'$\lambda^{\Xi_{N}}_{max}$')
-            plt.ylabel('dbm')
-            plt.xlabel('N')
-            plt.grid()
-            plt.legend()
 
-            plt.subplot(2, 2, 2)
-            plt.plot(np.arange(1, N+1), watt2dbm(eigenvectors_energy), label=r'$||u_{N}[0]||_2^2$')  # =N||{v^{\Xi_{N}}_{max}}[0:n-1]||_2^2
-            plt.ylabel('dbm')
-            plt.xlabel('N')
-            plt.legend()
-            #plt.title(r'$\lambda^{\Xi_N}_{max}$')
-            plt.grid()
+    def lambda_max_figures(self, lambda_Xi_max, u_0, N, corresponding_eigenvector, strings):
+        lambda_Xi_max = np.asarray(lambda_Xi_max)
+        lambda_Xi_max_relation = np.divide(lambda_Xi_max[1:], lambda_Xi_max[:-1])
+        # u_0 = np.zeros((lambda_Xi_max.shape[0], self.dim_x, 1))
+        # for i in range(len(corresponding_eigenvector)):
+        # u_0[i] = corresponding_eigenvector[i][:self.dim_x][:, None]
+        # print(f'square norm of eigenvector for {i+1} time steps: {np.power(np.linalg.norm(corresponding_eigenvector[i]), 2)}')
+        eigenvectors_energy = np.sum(np.power(u_0, 2), axis=1)
+        if self.dim_x == 2:
+            eigenvectors_angle_deg = np.arctan2(u_0[:, 1], u_0[:, 0]) / np.pi * 180
+        eigenvectors_energy_relation = np.divide(eigenvectors_energy[1:], eigenvectors_energy[:-1])
+        # delta_eigenvectors_energy = np.sum(np.power(eigenvectors[1:] - eigenvectors[:-1], 2), axis=1)
+        # delta_eigenvector_energy_relation = np.divide(delta_eigenvectors_energy, np.sum(np.power(eigenvectors[:-1], 2), axis=1))
+        # delta_eigenvalue_energy = lambda_Xi_max[1:] / lambda_Xi_max[:-1]
 
-            plt.subplot(2, 2, 4)
-            plt.plot(np.arange(2, N+1), watt2db(eigenvectors_energy_relation), label=r'$\frac{||u_{N+1}[0]||_2^2}{||u_{N}[0]||_2^2}$')
-            plt.ylabel('db')
-            plt.xlabel('N')
-            plt.legend()
-            #plt.title(r'$\lambda^{\Xi_N}_{max}$')
-            plt.grid()
+        plt.figure(figsize=(12, 4))
+        plt.subplot(2, 2, 1)
+        plt.plot(np.arange(1, N + 1), watt2dbm(lambda_Xi_max), label=strings[0])
+        plt.ylabel('dbm')
+        plt.xlabel('N')
+        plt.grid()
+        plt.legend()
 
-            plt.subplot(2, 2, 3)
-            plt.plot(np.arange(2, N+1), watt2db(lambda_Xi_max_relation), label=r'$\frac{\lambda^{\Xi_{N+1}}_{max}}{\lambda^{\Xi_{N}}_{max}}$')
-            plt.ylabel('db')
-            plt.xlabel('N')
-            plt.legend()
-            #plt.title(r'$\lambda^{\Xi_N}_{max}$')
-            plt.grid()
+        plt.subplot(2, 2, 2)
+        plt.plot(np.arange(1, N + 1), watt2dbm(eigenvectors_energy),
+                 label=r'$||u_{N}[0]||_2^2$')  # =N||{v^{\Xi_{N}}_{max}}[0:n-1]||_2^2
+        plt.ylabel('dbm')
+        plt.xlabel('N')
+        plt.legend()
+        # plt.title(r'$\lambda^{\Xi_N}_{max}$')
+        plt.grid()
 
-            plt.subplots_adjust(hspace=0.4)
-            plt.subplots_adjust(wspace=0.4)
+        plt.subplot(2, 2, 4)
+        plt.plot(np.arange(2, N + 1), watt2db(eigenvectors_energy_relation),
+                 label=r'$\frac{||u_{N+1}[0]||_2^2}{||u_{N}[0]||_2^2}$')
+        plt.ylabel('db')
+        plt.xlabel('N')
+        plt.legend()
+        # plt.title(r'$\lambda^{\Xi_N}_{max}$')
+        plt.grid()
 
-            # plotting the time-series control for longest N available
-            blockVec_u = corresponding_eigenvector[-1]
-            u = blockVec_u.reshape(int(blockVec_u.shape[0] / self.dim_x), self.dim_x, 1)
-            u_energy = np.power(np.linalg.norm(u, axis=1, keepdims=True), 2)
-            plt.figure()
-            if self.dim_x == 2: plt.subplot(2,1,1)
-            plt.plot(np.arange(0, N), watt2dbm(u_energy)[:, 0, 0], label=r'$||u_k||_2^2$')
-            plt.title(f'Energy of control for {N} time-steps horizon')
+        plt.subplot(2, 2, 3)
+        plt.plot(np.arange(2, N + 1), watt2db(lambda_Xi_max_relation),
+                 label=strings[1])
+        plt.ylabel('db')
+        plt.xlabel('N')
+        plt.legend()
+        # plt.title(r'$\lambda^{\Xi_N}_{max}$')
+        plt.grid()
+
+        plt.subplots_adjust(hspace=0.4)
+        plt.subplots_adjust(wspace=0.4)
+
+        # plotting the time-series control for longest N available
+        blockVec_u = corresponding_eigenvector[-1]
+        u = blockVec_u.reshape(int(blockVec_u.shape[0] / self.dim_x), self.dim_x, 1)
+        u_energy = np.power(np.linalg.norm(u, axis=1, keepdims=True), 2)
+        plt.figure()
+        if self.dim_x == 2: plt.subplot(2, 1, 1)
+        plt.plot(np.arange(0, N), watt2dbm(u_energy)[:, 0, 0], label=r'$||u_k||_2^2$')
+        plt.title(f'Energy of control for {N} time-steps horizon')
+        plt.xlabel('k')
+        plt.ylabel('dbm')
+        plt.legend()
+        plt.grid()
+
+        if self.dim_x == 2:
+            u_angle_deg = np.arctan2(u[:, 1], u[:, 0]) / np.pi * 180
+            plt.subplot(2, 1, 2)
+            plt.plot(np.arange(0, N), u_angle_deg[:, 0], '--*', label=r'$\angle u_k$')
+            plt.title(f'Angle of control for {N} time-steps horizon')
             plt.xlabel('k')
+            plt.ylabel('deg')
+            plt.legend()
+            plt.grid()
+            plt.subplots_adjust(hspace=0.5)
+
+        # plotting u[0] for all tested N
+        if self.dim_x == 2:
+            plt.figure()
+            plt.subplot(2, 1, 1)
+            plt.plot(np.arange(1, N + 1), watt2dbm(eigenvectors_energy), '--*',
+                     label=r'$||u_{N}[0]||_2^2$')  # =N||{v^{\Xi_{N}}_{max}}[0:n-1]||_2^2
             plt.ylabel('dbm')
+            plt.xlabel('N')
             plt.legend()
             plt.grid()
 
-            if self.dim_x == 2:
-                u_angle_deg = np.arctan2(u[:,1], u[:,0]) / np.pi * 180
-                plt.subplot(2,1,2)
-                plt.plot(np.arange(0, N), u_angle_deg[:, 0], '--*', label=r'$\angle u_k$')
-                plt.title(f'Angle of control for {N} time-steps horizon')
-                plt.xlabel('k')
-                plt.ylabel('deg')
-                plt.legend()
-                plt.grid()
-                plt.subplots_adjust(hspace=0.5)
+            plt.subplot(2, 1, 2)
+            plt.plot(np.arange(1, N + 1), eigenvectors_angle_deg, '--*',
+                     label=r'$\angle u_{N}[0]$')  # =N||{v^{\Xi_{N}}_{max}}[0:n-1]||_2^2
+            plt.ylabel('deg')
+            plt.xlabel('N')
+            plt.legend()
+            plt.grid()
 
-            # plotting u[0] for all tested N
-            if self.dim_x == 2:
-                plt.figure()
-                plt.subplot(2,1,1)
-                plt.plot(np.arange(1, N + 1), watt2dbm(eigenvectors_energy), '--*', label=r'$||u_{N}[0]||_2^2$')  # =N||{v^{\Xi_{N}}_{max}}[0:n-1]||_2^2
-                plt.ylabel('dbm')
-                plt.xlabel('N')
-                plt.legend()
-                plt.grid()
+            plt.subplots_adjust(hspace=0.5)
 
-                plt.subplot(2,1,2)
-                plt.plot(np.arange(1, N + 1), eigenvectors_angle_deg, '--*', label=r'$\angle u_{N}[0]$')  # =N||{v^{\Xi_{N}}_{max}}[0:n-1]||_2^2
-                plt.ylabel('deg')
-                plt.xlabel('N')
-                plt.legend()
-                plt.grid()
-
-                plt.subplots_adjust(hspace=0.5)
-
-            #plt.show()
+        # plt.show()
 
     def windowSizeTest(self, u_N0_j, u_2N0_j, caligraphE_N0_j, caligraphE_2N0_j, alpha_over_N_0, alpha_over_2N_0):
         delta_u_energy = torch.sum(torch.pow(u_N0_j - u_2N0_j, 2), dim=2)
