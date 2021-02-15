@@ -14,12 +14,12 @@ import time
 #np.random.seed(21)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
 dim_x, dim_z = 2, 2
-N = 200  # time steps
+N = 20  # time steps
 Ns_2_2N0_factor = 1000
 batchSize = 100000
 useCuda = False
 
-enableNoAccessPlayer = True
+enableSmartPlayers = True
 
 # create a single system model:
 sysModel = GenSysModel(dim_x, dim_z)
@@ -66,8 +66,11 @@ tilde_e_k_given_N_minus_1 = tilde_x_est_s - tilde_x
 
 print(f'mean energy of tilde_x: ',{watt2dbm(calcTimeSeriesMeanEnergy(tilde_x).mean())},' [dbm]')
 
+caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1)
+caligraphE_S_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_N_minus_1)
+
 delta_u, delta_caligraphE = 1e-3, 1e-3
-adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, enableNoAccessPlayer, Ns_2_2N0_factor)
+adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, enableSmartPlayers, Ns_2_2N0_factor)
 
 # No knowledge player:
 u_0 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
@@ -77,14 +80,24 @@ u_0 = noKnowledgePlayer(u_0)
 
 print(f'mean energy of u_0: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_0).mean())},' [dbm]')
 
+# Kalman filters:
+z_0 = tilde_z + torch.matmul(H_transpose, u_0)
+x_0_est_f, x_0_est_s = pytorchEstimator(z_0, filterStateInit)
+
+e_R_0_k_given_k_minus_1 = x_0_est_f - tilde_x
+
+caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1)
+
 # No access player:
-if enableNoAccessPlayer:
-    u_1 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
+if enableSmartPlayers:
+    u_1, u_2, u_3 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float), torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float), torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
     if useCuda:
-        u_1 = u_1.cuda()
+        u_1, u_2, u_3 = u_1.cuda(), u_2.cuda(), u_3.cuda()
     u_1, _ = noAccessPlayer(adversarialPlayersToolbox, u_1, tilde_e_k_given_k_minus_1) # tilde_e_k_given_k_minus_1 is given only for the window size calculation. It is legit
+    u_3 = geniePlayer(adversarialPlayersToolbox, u_3, tilde_e_k_given_k_minus_1)
 
     print(f'mean energy of u_1: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_1).mean())},' [dbm]')
+    print(f'mean energy of u_3: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3).mean())}, ' [dbm]')
 
     z_1 = tilde_z + torch.matmul(H_transpose, u_1)
     x_1_est_f, x_1_est_s = pytorchEstimator(z_1, filterStateInit)
@@ -92,16 +105,12 @@ if enableNoAccessPlayer:
     e_R_1_k_given_k_minus_1 = x_1_est_f - tilde_x
     caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1)
 
-# Kalman filters:
-z_0 = tilde_z + torch.matmul(H_transpose, u_0)
-x_0_est_f, x_0_est_s = pytorchEstimator(z_0, filterStateInit)
+    z_3 = tilde_z + torch.matmul(H_transpose, u_3)
+    x_3_est_f, x_3_est_s = pytorchEstimator(z_3, filterStateInit)
 
-e_R_0_k_given_k_minus_1 = x_0_est_f - tilde_x
+    e_R_3_k_given_k_minus_1 = x_3_est_f - tilde_x
+    caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1)
 
-caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1)
-caligraphE_S_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_N_minus_1)
-
-caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1)
 
 caligraphE_tVec = np.arange(0, N, 1)
 
@@ -110,8 +119,9 @@ caligraphE_tVec = np.arange(0, N, 1)
 caligraphE_F_minus_1, caligraphE_S_minus_1 = caligraphE_F_minus_1.detach().cpu().numpy(), caligraphE_S_minus_1.detach().cpu().numpy()
 caligraphE_F_0 = caligraphE_F_0.detach().cpu().numpy()
 
-if enableNoAccessPlayer:
+if enableSmartPlayers:
     caligraphE_F_1 = caligraphE_F_1.detach().cpu().numpy()
+    caligraphE_F_3 = caligraphE_F_3.detach().cpu().numpy()
 
 trace_bar_Sigma = np.trace(pytorchEstimator.theoreticalBarSigma.cpu().numpy())
 trace_bar_Sigma_S = np.trace(pytorchEstimator.theoreticalSmoothingSigma.cpu().numpy())
@@ -134,7 +144,7 @@ if enableDirctCalcsOnBlockVecs:  # this shows that the gap for E(1) is legit
     print(f'No knowledge player empiric performance linear part: {watt2dbm(caligraphE_directCalc_linearPart)} dbm')
     print(f'No knowledge player empiric performance quadratic part: {watt2dbm(caligraphE_directCalc_quadraticPart)} dbm')
 
-if enableNoAccessPlayer:
+if enableSmartPlayers:
     theoretical_caligraphE_F_1 = trace_bar_Sigma + adversarialPlayersToolbox.theoretical_lambda_Xi_N_max.cpu().numpy()
     theoretical_upper_bound = trace_bar_Sigma + adversarialPlayersToolbox.theoretical_lambda_Xi_N_max.cpu().numpy() + 2*np.sqrt(adversarialPlayersToolbox.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max.cpu().numpy()*trace_bar_Sigma)
 
@@ -144,8 +154,9 @@ batchIdx = 0
 
 print(f'pure kalman performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_minus_1[-1])) - watt2dbm(np.mean(caligraphE_F_minus_1[-1]))} db')
 print(f'no knowledge player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_0[-1])) - watt2dbm(np.mean(caligraphE_F_0[-1]))} db')
-if enableNoAccessPlayer:
+if enableSmartPlayers:
     print(f'no access player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_1[-1])) - watt2dbm(np.mean(caligraphE_F_1[-1]))} db')
+    print(f'genie player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_3[-1])) - watt2dbm(np.mean(caligraphE_F_3[-1]))} db')
 
 caligraphE_F_minus_1_b = caligraphE_F_minus_1[:, batchIdx]  # watt
 caligraphE_S_minus_1_b = caligraphE_S_minus_1[:, batchIdx]
@@ -155,12 +166,15 @@ caligraphE_F_minus_1_mean = np.mean(caligraphE_F_minus_1, axis=1)  # watt
 caligraphE_S_minus_1_mean = np.mean(caligraphE_S_minus_1, axis=1)  # watt
 
 caligraphE_F_0_b = caligraphE_F_0[:, batchIdx]
-if enableNoAccessPlayer:
+caligraphE_F_0_mean = np.mean(caligraphE_F_0, axis=1)  # watt
+#caligraphE_F_0_mean = np.power(np.mean(np.sqrt(caligraphE_F_0), axis=1), 2)  # watt
+
+if enableSmartPlayers:
     caligraphE_F_1_b = caligraphE_F_1[:, batchIdx]
     caligraphE_F_1_mean = np.mean(caligraphE_F_1, axis=1)  # watt
 
-caligraphE_F_0_mean = np.mean(caligraphE_F_0, axis=1)  # watt
-#caligraphE_F_0_mean = np.power(np.mean(np.sqrt(caligraphE_F_0), axis=1), 2)  # watt
+    caligraphE_F_3_b = caligraphE_F_3[:, batchIdx]
+    caligraphE_F_3_mean = np.mean(caligraphE_F_3, axis=1)  # watt
 
 
 plt.figure(figsize=(16,8))
@@ -178,15 +192,17 @@ plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVe
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_b), 'b', label = r'empirical ${\cal E}^{(0)}_{F,k}$')
 plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
-if enableNoAccessPlayer:
+if enableSmartPlayers:
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_b), 'r', label = r'empirical ${\cal E}^{(1)}_{F,k}$')
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
-    minY_absolute = np.min((watt2dbm(theoretical_upper_bound), np.min((watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))))
-    maxY_absolute = np.max((watt2dbm(theoretical_upper_bound), np.max((watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))))
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_b), color='orange', label=r'empirical ${\cal E}^{(3)}_{F,k}$')
+
+    minY_absolute = np.min((watt2dbm(theoretical_upper_bound), np.min((watt2dbm(caligraphE_F_3_b), watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))))
+    maxY_absolute = np.max((watt2dbm(theoretical_upper_bound), np.max((watt2dbm(caligraphE_F_3_b), watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))))
 
 marginAbsolute = 1 # db
-if enableNoAccessPlayer: plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
+if enableSmartPlayers: plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
 plt.legend()
 plt.ylabel('dbm')
 plt.grid()
@@ -200,17 +216,19 @@ plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligr
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), 'b', label = r'empirical ${\cal E}^{(0)}_{F,k}$')
 plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
-if enableNoAccessPlayer:
+if enableSmartPlayers:
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b), 'r', label = r'empirical ${\cal E}^{(1)}_{F,k}$')
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
-    minY_relative = np.min((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
-    maxY_relative = np.max((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_b) - watt2dbm(caligraphE_F_minus_1_b), color='orange', label = r'empirical ${\cal E}^{(3)}_{F,k}$')
+
+    minY_relative = np.min((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_3_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
+    maxY_relative = np.max((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_3_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
 
 marginRelative = 1
 plt.legend()
 plt.ylabel('db')
-if enableNoAccessPlayer: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
+if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
 plt.grid()
 
 plt.subplot(2, 2, 2)
@@ -224,13 +242,15 @@ plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVe
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean), 'b', label = r'empirical ${\cal E}^{(0)}_{F,k}$')
 plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
-if enableNoAccessPlayer:
+if enableSmartPlayers:
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean), 'r', label = r'empirical ${\cal E}^{(1)}_{F,k}$')
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean), color='orange', label=r'empirical ${\cal E}^{(3)}_{F,k}$')
+
 plt.legend()
 plt.ylabel('dbm')
-if enableNoAccessPlayer: plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
+if enableSmartPlayers: plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
 plt.grid()
 
 plt.subplot(2, 2, 4)
@@ -241,13 +261,15 @@ plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligr
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'b', label = r'empirical ${\cal E}^{(0)}_{F,k}$')
 plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
-if enableNoAccessPlayer:
+if enableSmartPlayers:
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'r', label = r'empirical ${\cal E}^{(1)}_{F,k}$')
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label = r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange', label = r'empirical ${\cal E}^{(3)}_{F,k}$')
+
 plt.legend()
 plt.ylabel('db')
-if enableNoAccessPlayer: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
+if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
 plt.grid()
 
 plt.show()

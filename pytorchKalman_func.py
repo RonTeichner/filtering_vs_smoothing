@@ -321,6 +321,29 @@ def noKnowledgePlayer(u):
     sigma_u_square = torch.tensor(1 / dim_x, dtype=torch.float)
     return torch.mul(torch.sqrt(sigma_u_square), torch.randn_like(u))
 
+def geniePlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
+    use_cuda = adversarialPlayersToolbox.use_cuda
+    N, batchSize, dim_x = u.shape[0], u.shape[1], u.shape[2]
+
+    print(f'adversarial genie player begins')
+    blockVec_tilde_e_full = tilde_e_k_given_k_minus_1.permute(1, 0, 2, 3).reshape(batchSize, N * dim_x, 1)
+
+    Xi_N = adversarialPlayersToolbox.compute_Xi_l_N(0, N)
+    bar_Xi_N = adversarialPlayersToolbox.compute_bar_Xi_N(N)
+    # note that J_0_N = Xi_N
+    J_0_N = (Xi_N, 0, N)
+    if use_cuda:
+        tilde_b = torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full).coda()
+        alpha = N * torch.ones(batchSize, dtype=torch.float).cuda()
+    else:
+        tilde_b = torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full)
+        alpha = N * torch.ones(batchSize, dtype=torch.float)
+
+    u_N_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_0_N, tilde_b=tilde_b, alpha=alpha)
+    u[:N] = u_N_blockVec.reshape(batchSize, N, dim_x, 1).permute(1, 0, 2, 3)
+
+    return u
+
 def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
     # tilde_e_k_given_k_minus_1 should be used only for the window size calculation
     use_cuda = adversarialPlayersToolbox.use_cuda
@@ -366,7 +389,7 @@ def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
     return u, caligraphE_Ni
 
 class playersToolbox:
-    def __init__(self, pytorchEstimator, delta_u, delta_caligraphE, enableNoAccessPlayer, Ns_2_2N0_factor):
+    def __init__(self, pytorchEstimator, delta_u, delta_caligraphE, enableSmartPlayers, Ns_2_2N0_factor):
         self.tildeF = pytorchEstimator.tildeF
         self.K = pytorchEstimator.K
         self.H = pytorchEstimator.H
@@ -394,7 +417,7 @@ class playersToolbox:
             self.thr_db.cuda()
             self.thr.cuda()
 
-        if enableNoAccessPlayer:
+        if enableSmartPlayers:
             self.compute_lambda_Xi_max(enableFigure=True)
             self.compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(enableFigure=True)
 
@@ -727,11 +750,14 @@ class playersToolbox:
             u = torch.zeros(batchSize, N, 1, dtype=torch.float)
             lambda_star = torch.zeros(batchSize)
 
-        identicalBatches = (alpha.var() == 0)
+        identicalAlphas, identical_bs = (alpha.var() == 0), (tilde_b.var(dim=0).max() == 0)
+        identicalBatches = identicalAlphas and identical_bs
         for batchIndex in range(batchSize):
-            eigenvalues_A, eigenvectors_A = -torch.multiply(J_j_N_eig[0], torch.sqrt(alpha[batchIndex])), J_j_N_eig[1]
-            # columns of eigenvectors_A are the eigenvectors
-            lambda_min_A = eigenvalues_A[-1]
+            if batchIndex == 0 or not(identicalAlphas):
+                A = torch.multiply(-torch.sqrt(alpha[batchIndex]), J_j_N[0])
+                eigenvalues_A, eigenvectors_A = -torch.multiply(J_j_N_eig[0], torch.sqrt(alpha[batchIndex])), J_j_N_eig[1]
+                # columns of eigenvectors_A are the eigenvectors
+                lambda_min_A = eigenvalues_A[-1]
             if torch.max(torch.abs(b)) == 0: # pure qudratic
                 lambda_star[batchIndex] = lambda_min_A
                 if lambda_star[batchIndex] >= 0:
@@ -740,6 +766,8 @@ class playersToolbox:
                     x = eigenvectors_A[:, -1][:, None]
             else:
                 eigenvectors_A_dot_b = torch.pow(torch.matmul(torch.transpose(eigenvectors_A, 1, 0), b[batchIndex]), 2)
+                lambda_star[batchIndex] = self.calc_lambda_star(eigenvectors_A_dot_b[:, 0], eigenvalues_A)
+                x = -torch.matmul(torch.inverse(A + lambda_star[batchIndex]*torch.eye(self.dim_x)), b[batchIndex])
 
             u[batchIndex] = torch.multiply(x, torch.sqrt(alpha[batchIndex]))
 
@@ -748,6 +776,24 @@ class playersToolbox:
                 break
 
         return u, lambda_star
+
+    def calc_lambda_star(self, eigenvectors_A_dot_b, eigenvalues_A):
+        l, step = 500, 1e-3
+        lambdaVec = torch.arange(-eigenvalues_A.min() + step, -eigenvalues_A.min() + step + l, step)
+        optFuncVal = torch.zeros_like(lambdaVec)
+        for i, lambda_ in enumerate(lambdaVec):
+            optFuncVal[i] = torch.sum(torch.div(eigenvectors_A_dot_b, eigenvalues_A + lambda_)) + lambda_
+
+        enableFigure = True
+        if enableFigure:
+            plt.figure()
+            plt.plot(lambdaVec, watt2dbm(optFuncVal))
+            plt.xlabel(r'$\lambda$')
+            plt.ylabel('db')
+            plt.title('optimization objective')
+            plt.grid()
+            plt.show()
+        x=3
 
     def compute_caligraphE(self, u_N, tilde_e_N):
         N = int(u_N.shape[1]/self.dim_x)
