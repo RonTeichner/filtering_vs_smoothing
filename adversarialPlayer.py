@@ -11,12 +11,12 @@ import torch.optim as optim
 import pickle
 import time
 
-#np.random.seed(21)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
+np.random.seed(13)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
 dim_x, dim_z = 2, 2
-N = 20  # time steps
+N = 200  # time steps
 Ns_2_2N0_factor = 1000
-batchSize = 100000
+batchSize = 10000
 useCuda = False
 
 enableSmartPlayers = True
@@ -225,8 +225,8 @@ if enableSmartPlayers:
     minY_relative = np.min((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_3_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
     maxY_relative = np.max((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_3_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
 
-marginRelative = 1
-plt.legend()
+marginRelative = 5
+#plt.legend()
 plt.ylabel('db')
 if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
 plt.grid()
@@ -248,7 +248,7 @@ if enableSmartPlayers:
 
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean), color='orange', label=r'empirical ${\cal E}^{(3)}_{F,k}$')
 
-plt.legend()
+#plt.legend()
 plt.ylabel('dbm')
 if enableSmartPlayers: plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute])
 plt.grid()
@@ -256,7 +256,7 @@ plt.grid()
 plt.subplot(2, 2, 4)
 plt.title('Players mean performance w.r.t pure filter')
 
-plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)), 'k--', label = r'theoretical upper bound')
+plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label = r'theoretical upper bound')
 
 plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'b', label = r'empirical ${\cal E}^{(0)}_{F,k}$')
 plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--', label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
@@ -267,7 +267,7 @@ if enableSmartPlayers:
 
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange', label = r'empirical ${\cal E}^{(3)}_{F,k}$')
 
-plt.legend()
+#plt.legend()
 plt.ylabel('db')
 if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
 plt.grid()

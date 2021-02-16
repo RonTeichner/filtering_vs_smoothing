@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 #from __future__ import print_function
 #from __future__ import division
+import cvxpy as cp
 from analyticResults_func import watt2db, volt2dbm, watt2dbm, calc_tildeB, calc_tildeC, calcDeltaR
 
 
@@ -764,36 +765,83 @@ class playersToolbox:
                     x.fill_(0)
                 else:
                     x = eigenvectors_A[:, -1][:, None]
+                u[batchIndex] = torch.multiply(x, torch.sqrt(alpha[batchIndex]))
+                if identicalBatches:
+                    u[1:] = u[0]
+                    break
             else:
-                eigenvectors_A_dot_b = torch.pow(torch.matmul(torch.transpose(eigenvectors_A, 1, 0), b[batchIndex]), 2)
-                lambda_star[batchIndex] = self.calc_lambda_star(eigenvectors_A_dot_b[:, 0], eigenvalues_A)
-                x = -torch.matmul(torch.inverse(A + lambda_star[batchIndex]*torch.eye(self.dim_x)), b[batchIndex])
-
-            u[batchIndex] = torch.multiply(x, torch.sqrt(alpha[batchIndex]))
-
-            if identicalBatches:
-                u[1:] = u[0]
+                assert identicalAlphas
+                # assuming identicalAlphas: (otherwise must write some more code)
+                square_eigenvectors_A_dot_b = torch.pow(torch.matmul(torch.transpose(eigenvectors_A, 1, 0), b), 2)
+                lambda_star = self.calc_lambda_star(square_eigenvectors_A_dot_b[:, :, 0], eigenvalues_A) # calculating lambda_star for all batches
+                x = - torch.matmul(torch.inverse(A[None, :, :].repeat(batchSize, 1, 1) + torch.multiply(lambda_star[:, :, None], torch.eye(N)[None, :, :].repeat(batchSize, 1, 1))), b)
+                u = torch.multiply(x, torch.sqrt(alpha[batchIndex]))
                 break
 
         return u, lambda_star
 
-    def calc_lambda_star(self, eigenvectors_A_dot_b, eigenvalues_A):
+    def calc_lambda_star(self, square_eigenvectors_A_dot_b, eigenvalues_A):
         l, step = 500, 1e-3
-        lambdaVec = torch.arange(-eigenvalues_A.min() + step, -eigenvalues_A.min() + step + l, step)
-        optFuncVal = torch.zeros_like(lambdaVec)
-        for i, lambda_ in enumerate(lambdaVec):
-            optFuncVal[i] = torch.sum(torch.div(eigenvectors_A_dot_b, eigenvalues_A + lambda_)) + lambda_
+        batchSize = square_eigenvectors_A_dot_b.shape[0]
 
-        enableFigure = True
+        if self.use_cuda:
+            lambda_star, optimalVal = torch.zeros(batchSize).cuda(), torch.zeros(batchSize).cuda()
+        else:
+            lambda_star, optimalVal = torch.zeros(batchSize), torch.zeros(batchSize)
+
+
+        lambda_min_A = eigenvalues_A[-1]
+        enableBatchSolve = True
+        if not(enableBatchSolve):
+            # since CVXPY returns numpy:
+            lambda_star_numpy, optimalVal_numpy = np.zeros((batchSize, 1)), np.zeros((batchSize, 1))
+            lambdaVar = cp.Variable()
+            constraints = [lambdaVar >= -lambda_min_A + 1e-10]
+            for batchIdx in range(batchSize):
+                print(f'convex optimization {batchIdx} out of {batchSize}')
+                objective = cp.Minimize(cp.sum(cp.multiply(square_eigenvectors_A_dot_b[batchIdx], (lambdaVar + eigenvalues_A)**(-1))) + lambdaVar)
+                prob = cp.Problem(objective, constraints)
+                prob.solve()  # Returns the optimal value.
+                lambda_star_numpy[batchIdx], optimalVal_numpy[batchIdx] = lambdaVar.value, prob.value
+        else:
+            lambdaBatchVar = cp.Variable((batchSize,1))
+            constraintsBatch = [lambdaBatchVar >= -lambda_min_A + 1e-10]
+            objectiveBatch = cp.Minimize(cp.sum(cp.sum(cp.multiply(square_eigenvectors_A_dot_b, (lambdaBatchVar + eigenvalues_A[None,:].repeat(batchSize,1))**(-1)), axis=1, keepdims=True) + lambdaBatchVar))
+            probBatch = cp.Problem(objectiveBatch, constraintsBatch)
+            probBatch.solve()
+            lambda_star_numpy, optimalVal_numpy = lambdaBatchVar.value, probBatch.value
+
+        if self.use_cuda:
+            lambda_star, optimalVal = torch.tensor(lambda_star_numpy, dtype=torch.float).cuda(), torch.tensor(optimalVal_numpy, dtype=torch.float).cuda()
+        else:
+            lambda_star, optimalVal = torch.tensor(lambda_star_numpy, dtype=torch.float), torch.tensor(optimalVal_numpy, dtype=torch.float)
+
+        enableFigure = False # plotting a few optimization functions from the batch
         if enableFigure:
+            nExamples2Plot = 5
+            lambdaVec = torch.arange(-eigenvalues_A.min() + step, -eigenvalues_A.min() + step + l, step)
+            if self.use_cuda:
+                optFuncVal = torch.zeros(nExamples2Plot, lambdaVec.shape[0], dtype=torch.float).cuda()
+            else:
+                optFuncVal = torch.zeros(nExamples2Plot, lambdaVec.shape[0], dtype=torch.float)
+
+            for i, lambda_ in enumerate(lambdaVec):
+                optFuncVal[:, i] = torch.sum(torch.div(square_eigenvectors_A_dot_b[:nExamples2Plot], eigenvalues_A + lambda_), dim=1) + lambda_
+
             plt.figure()
-            plt.plot(lambdaVec, watt2dbm(optFuncVal))
+            for plotIdx in range(nExamples2Plot):
+                plt.plot(lambdaVec, watt2dbm(optFuncVal[plotIdx]))
+                optimalLambdaCurrentIdx = lambda_star[plotIdx]
+                optimalValCurrentIdx = torch.sum(torch.div(square_eigenvectors_A_dot_b[plotIdx], eigenvalues_A + optimalLambdaCurrentIdx)) + optimalLambdaCurrentIdx
+                plt.plot(optimalLambdaCurrentIdx, watt2dbm(optimalValCurrentIdx), 'ko')
+
             plt.xlabel(r'$\lambda$')
             plt.ylabel('db')
-            plt.title('optimization objective')
+            plt.title('optimization objective examples; same system')
             plt.grid()
             plt.show()
-        x=3
+
+        return lambda_star
 
     def compute_caligraphE(self, u_N, tilde_e_N):
         N = int(u_N.shape[1]/self.dim_x)
