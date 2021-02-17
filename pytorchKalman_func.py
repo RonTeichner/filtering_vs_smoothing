@@ -50,7 +50,7 @@ def GenMeasurements(N, batchSize, sysModel):
 
     z = np.matmul(H.transpose(), x) + measurementNoises
 
-    return z, x
+    return z, x, processNoises, measurementNoises
 
 def Anderson_filter_smoother(z, sysModel, filter_P_init, filterStateInit):
     # filter_P_init: [1, batchSize, dim_x, dim_x]
@@ -322,6 +322,46 @@ def noKnowledgePlayer(u):
     sigma_u_square = torch.tensor(1 / dim_x, dtype=torch.float)
     return torch.mul(torch.sqrt(sigma_u_square), torch.randn_like(u))
 
+def causalPlayer(adversarialPlayersToolbox, u, processNoises):
+    use_cuda = adversarialPlayersToolbox.use_cuda
+    N, batchSize, dim_x = u.shape[0], u.shape[1], u.shape[2]
+
+    print(f'adversarial causal player begins')
+
+    if use_cuda:
+        powerUsedSoFar = torch.zeros(batchSize, dtype=torch.float).cuda()
+    else:
+        powerUsedSoFar = torch.zeros(batchSize, dtype=torch.float)
+
+    for j in range(N):
+        print(f'adversarial causal player begins {j+1} out of {N}')
+        J_j_N = adversarialPlayersToolbox.compute_J_j_N(j, N)
+        J_j_N_tupple = (J_j_N, j, N)
+
+        if j-1 >= 0:
+            u_past_blockVec = u[:j].permute(1, 0, 2, 3).reshape(batchSize, j * dim_x, 1)
+        else:
+            u_past_blockVec = torch.zeros(batchSize, 0, 1, dtype=torch.float)
+
+        if j-2 >= 0:
+            omega_past_blockVec = processNoises[:j-1].permute(1, 0, 2, 3).reshape(batchSize, (j-1) * dim_x, 1)
+        else:
+            omega_past_blockVec = torch.zeros(batchSize, 0, 1, dtype=torch.float)
+
+        tildeb_j_N = adversarialPlayersToolbox.compute_tildeb_j_N(u_past_blockVec, omega_past_blockVec, j, N)
+
+        alpha = N - powerUsedSoFar
+
+        iter_u_N_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_j_N_tupple, tilde_b=tildeb_j_N, alpha=alpha)
+        iter_u = iter_u_N_blockVec.reshape(batchSize, N-j, dim_x, 1).permute(1, 0, 2, 3)
+        u[j] = iter_u[0]
+
+        powerUsedSoFar = powerUsedSoFar + torch.sum(torch.pow(u[j:j+1], 2), dim=2, keepdim=True)[0, :, 0, 0]
+
+        print(f'adversarial causal player ends {j + 1} out of {N}')
+
+    return u
+
 def geniePlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
     use_cuda = adversarialPlayersToolbox.use_cuda
     N, batchSize, dim_x = u.shape[0], u.shape[1], u.shape[2]
@@ -390,16 +430,17 @@ def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
     return u, caligraphE_Ni
 
 class playersToolbox:
-    def __init__(self, pytorchEstimator, delta_u, delta_caligraphE, enableSmartPlayers, Ns_2_2N0_factor):
+    def __init__(self, pytorchEstimator, delta_u, delta_caligraphE, enableSmartPlayers):
         self.tildeF = pytorchEstimator.tildeF
         self.K = pytorchEstimator.K
         self.H = pytorchEstimator.H
-        self.f = pytorchEstimator
+        self.theoreticalBarSigma = pytorchEstimator.theoreticalBarSigma
         self.dim_x = self.tildeF.shape[0]
-        self.delta_u, self.delta_caligraphE, self.Ns_2_2N0_factor = delta_u, delta_caligraphE, Ns_2_2N0_factor
+        self.delta_u, self.delta_caligraphE = delta_u, delta_caligraphE
         self.use_cuda = self.tildeF.is_cuda
         self.thr_db = 0.01  # db
         self.thr = 1e-20 * torch.max(torch.abs(self.tildeF))
+        self.Ns_2_2N0_factor = 100  # not in use
 
         self.K_HT = torch.matmul(self.K, torch.transpose(self.H, 1, 0))
 
@@ -410,7 +451,10 @@ class playersToolbox:
         self.compute_bar_Xi_N_bar_Xi_N_transpose_previous = 0
         self.compute_J_j_N_previous_j, self.compute_J_j_N_previous_N = 0, 0
         self.compute_J_j_N_eig_previous_j, self.compute_J_j_N_eig_previous_N = 0, 0
+        self.compute_tildeJ_j_N_previous_j, self.compute_tildeJ_j_N_previous_N = 0, 0
         self.compute_tildeJ_N0_j_N_previous_N_0, self.compute_tildeJ_N0_j_N_previous_j, self.compute_tildeJ_N0_j_N_previous_N = 0, 0, 0
+        self.compute_L_j_N_previous_j, self.compute_L_j_N_previous_N = 0, 0
+        self.compute_L_N0_j_N_previous_N_0, self.compute_L_N0_j_N_previous_j, self.compute_L_N0_j_N_previous_N = 0, 0, 0
 
         if self.use_cuda:
             self.K_HT.cuda()
@@ -421,6 +465,49 @@ class playersToolbox:
         if enableSmartPlayers:
             self.compute_lambda_Xi_max(enableFigure=True)
             self.compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(enableFigure=True)
+
+    def test_tilde_e_expression(self, systemInitState, filterStateInit, processNoises, measurementNoises, tilde_e_k_given_k_minus_1):
+        N, batchSize = processNoises.shape[0], processNoises.shape[1]
+        maxDiff = torch.zeros(1)
+        for k in range(N):
+            for j in range(N):
+                tilde_e_k_given_k_minus_1_calced_at_time_j = self.compute_tilde_e_k_given_k_minus_1_calced_at_time_j(systemInitState, filterStateInit, processNoises, measurementNoises, j, k)
+
+                currentMaxDiff = torch.sum(torch.pow(tilde_e_k_given_k_minus_1_calced_at_time_j - tilde_e_k_given_k_minus_1[k], 2), dim=2).max()  # watt
+                if currentMaxDiff > maxDiff:
+                    maxDiff = currentMaxDiff
+                    kMaxDiff, jMaxDiff = k, j
+
+                if j > 0:
+                    currentMaxDiff = torch.sum(torch.pow(tilde_e_k_given_k_minus_1_calced_at_time_j - tilde_e_k_given_k_minus_1_calced_at_time_j_minus_1, 2), dim=2).max()  # watt
+                    if currentMaxDiff > maxDiff:
+                        maxDiff = currentMaxDiff
+                        kMaxDiff, jMaxDiff = k, j
+
+                tilde_e_k_given_k_minus_1_calced_at_time_j_minus_1 = tilde_e_k_given_k_minus_1_calced_at_time_j
+        print(f'maxDiff is {watt2dbm(maxDiff) - watt2dbm(torch.trace(self.theoreticalBarSigma))} db w.r.t trace(bar(Sigma)); happened in k={kMaxDiff} and j={jMaxDiff}')
+
+    def compute_tilde_e_k_given_k_minus_1_calced_at_time_j(self, systemInitState, filterStateInit, processNoises, measurementNoises, j, k):
+        filterInitContribution = torch.matmul(torch.matrix_power(self.tildeF, k), systemInitState)
+        summed = torch.zeros_like(filterInitContribution)
+        for i in range(np.min((j-2,k-1)) + 1):
+            summed = summed + torch.matmul(torch.matrix_power(self.tildeF, k-i-1), processNoises[i:i+1])
+        partKnownToPlayer = filterInitContribution + summed
+
+        summed.fill_(0)
+        for i in range(np.max((0, j-1)), k):
+            summed = summed + torch.matmul(torch.matrix_power(self.tildeF, k - i - 1), (processNoises[i:i + 1] - torch.matmul(self.K, measurementNoises[i:i + 1])))
+
+        partUnknownToPlayer_01 = summed
+        summed.fill_(0)
+        for i in range(np.min((j - 2, k - 1)) + 1):
+            summed = summed + torch.matmul(torch.matrix_power(self.tildeF, k - i - 1), torch.matmul(self.K, measurementNoises[i:i + 1]))
+        partUnknownToPlayer_02 = summed
+        partUnknownToPlayer_03 = torch.matmul(torch.matrix_power(self.tildeF, k), filterStateInit[None, :, :, :])
+
+        partUnknownToPlayer = partUnknownToPlayer_01 - partUnknownToPlayer_02 - partUnknownToPlayer_03
+
+        return partKnownToPlayer + partUnknownToPlayer
 
     def compute_Xi_l_N(self, l, N):
         if not(l == self.compute_Xi_l_N_previous_l and N == self.compute_Xi_l_N_previous_N):
@@ -492,6 +579,44 @@ class playersToolbox:
 
         return self.J_j_N
 
+    def compute_tildeJ_j_N(self, j, N):
+        if not(j == self.compute_tildeJ_j_N_previous_j and N == self.compute_tildeJ_j_N_previous_N):
+            self.compute_tildeJ_j_N_previous_j, self.compute_tildeJ_j_N_previous_N = j, N
+            self.tildeJ_j_N = self.compute_tildeJ_N0_j_N(j, j, N)
+        return self.tildeJ_j_N
+
+    def compute_L_j_N(self, j, N):
+        if not(j == self.compute_L_j_N_previous_j and N == self.compute_L_j_N_previous_N):
+            self.compute_L_j_N_previous_j, self.compute_L_j_N_previous_N = j, N
+            self.L_j_N = self.compute_L_N0_j_N(j, j, N)
+        return self.L_j_N
+
+    def compute_L_N0_j_N(self, N_0, j, N):
+        if not(N_0 == self.compute_L_N0_j_N_previous_N_0 and j == self.compute_L_N0_j_N_previous_j and N == self.compute_L_N0_j_N_previous_N):
+            self.compute_L_N0_j_N_previous_N_0, self.compute_L_N0_j_N_previous_j, self.compute_L_N0_j_N_previous_N = N_0, j, N
+
+            self.L_N0_j_N = torch.zeros((N_0-1)*self.dim_x, (N-j)*self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.L_N0_j_N.cuda()
+
+            for r in range(N_0-1):
+                for c in range(N-j):
+                    k = np.max((r-N_0+j, c+j))
+                    self.summed.fill_(0)
+                    if self.use_cuda:
+                        summedItter = torch.tensor(float("inf")).cuda()
+                    else:
+                        summedItter = torch.tensor(float("inf"))
+                    while True:
+                        k += 1
+                        if torch.max(torch.abs(summedItter)) < self.thr or k > N-1:
+                            break
+                        summedItter = torch.matmul(torch.transpose(torch.matrix_power(self.tildeF, k-1-r-j+N_0), 1, 0), torch.matrix_power(self.tildeF, k-1-c-j))
+                        self.summed = self.summed + summedItter
+
+                    self.L_N0_j_N[self.dim_x*r:self.dim_x*(r+1), self.dim_x*c:self.dim_x*(c+1)] = torch.matmul(self.summed, self.K_HT)
+
+        return self.L_N0_j_N
+
     def compute_tildeJ_N0_j_N(self, N_0, j, N):
         if not(N_0 == self.compute_tildeJ_N0_j_N_previous_N_0 and j == self.compute_tildeJ_N0_j_N_previous_j and N == self.compute_tildeJ_N0_j_N_previous_N):
             self.compute_tildeJ_N0_j_N_previous_N_0, self.compute_tildeJ_N0_j_N_previous_j, self.compute_tildeJ_N0_j_N_previous_N = N_0, j, N
@@ -525,6 +650,26 @@ class playersToolbox:
             tildeJ_N0_j_N = self.compute_tildeJ_N0_j_N(N_0, j, N)
             tildeb_1 = torch.matmul(torch.transpose(tildeJ_N0_j_N, 1, 0), blockVec_u)
         return tildeb_1
+
+    def compute_tildeb_j_N(self, u, omega, j, N): # computing for the causal player
+        # u is from time 0 up to j-1; omega is from time 0 up to j-2
+        batchSize = u.shape[0]
+        if j-2 >= 0:
+            tildeJ_j_N, L_j_N = self.compute_tildeJ_j_N(j, N), self.compute_L_j_N(j, N)
+            pastActions = torch.matmul(torch.transpose(tildeJ_j_N, 0, 1), u)
+            pastProccessNoises = torch.matmul(torch.transpose(L_j_N, 0, 1), omega)
+            tildeb_j_N = pastActions + pastProccessNoises
+        elif j-1 >= 0:
+            tildeJ_j_N = self.compute_tildeJ_j_N(j, N)
+            pastActions = torch.matmul(torch.transpose(tildeJ_j_N, 0, 1), u)
+            tildeb_j_N = pastActions
+        else:
+            if self.use_cuda:
+                tildeb_j_N = torch.zeros(batchSize, N*self.dim_x, dtype=torch.float).cuda()
+            else:
+                tildeb_j_N = torch.zeros(batchSize, N * self.dim_x, dtype=torch.float)
+
+        return tildeb_j_N
 
     def compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(self, enableFigure):
         lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, corresponding_eigenvector = list(), list()
@@ -770,13 +915,18 @@ class playersToolbox:
                     u[1:] = u[0]
                     break
             else:
-                assert identicalAlphas
-                # assuming identicalAlphas: (otherwise must write some more code)
-                square_eigenvectors_A_dot_b = torch.pow(torch.matmul(torch.transpose(eigenvectors_A, 1, 0), b), 2)
-                lambda_star = self.calc_lambda_star(square_eigenvectors_A_dot_b[:, :, 0], eigenvalues_A) # calculating lambda_star for all batches
-                x = - torch.matmul(torch.inverse(A[None, :, :].repeat(batchSize, 1, 1) + torch.multiply(lambda_star[:, :, None], torch.eye(N)[None, :, :].repeat(batchSize, 1, 1))), b)
-                u = torch.multiply(x, torch.sqrt(alpha[batchIndex]))
-                break
+                if identicalAlphas:
+                    # assuming identicalAlphas: (otherwise must write some more code)
+                    square_eigenvectors_A_dot_b = torch.pow(torch.matmul(torch.transpose(eigenvectors_A, 1, 0), b), 2)
+                    lambda_star = self.calc_lambda_star(square_eigenvectors_A_dot_b[:, :, 0], eigenvalues_A) # calculating lambda_star for all batches
+                    x = - torch.matmul(torch.inverse(A[None, :, :].repeat(batchSize, 1, 1) + torch.multiply(lambda_star[:, :, None], torch.eye(N)[None, :, :].repeat(batchSize, 1, 1))), b)
+                    u = torch.multiply(x, torch.sqrt(alpha[batchIndex]))
+                    break
+                else:
+                    square_eigenvectors_A_dot_b = torch.pow(torch.matmul(torch.transpose(eigenvectors_A, 1, 0), b[batchIndex]), 2)[None, :, :]
+                    lambda_star[batchIndex] = self.calc_lambda_star(square_eigenvectors_A_dot_b[:, :, 0], eigenvalues_A)
+                    x = - torch.matmul(torch.inverse(A + torch.multiply(lambda_star[batchIndex], torch.eye(N))), b[batchIndex])
+                    u[batchIndex] = torch.multiply(x, torch.sqrt(alpha[batchIndex]))
 
         return u, lambda_star
 

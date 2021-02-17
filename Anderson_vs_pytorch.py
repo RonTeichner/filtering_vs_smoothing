@@ -24,7 +24,7 @@ filterStateInit = np.dot(np.linalg.cholesky(filter_P_init), np.random.randn(dim_
 sysModel = GenSysModel(dim_x, dim_z)
 
 # create time-series measurements (#time-series == batchSize):
-z, _ = GenMeasurements(N, batchSize, sysModel) # z: [N, batchSize, dim_z]
+z, _, _, _ = GenMeasurements(N, batchSize, sysModel) # z: [N, batchSize, dim_z]
 
 # run Anderson's filter & smoother:
 x_est_f_A, x_est_s_A = Anderson_filter_smoother(z, sysModel, filter_P_init, filterStateInit)
