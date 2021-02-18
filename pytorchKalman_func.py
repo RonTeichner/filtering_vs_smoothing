@@ -37,6 +37,7 @@ def GenMeasurements(N, batchSize, sysModel):
     x, z = np.zeros((N, batchSize, dim_x, 1)), np.zeros((N, batchSize, dim_z, 1))
     P = np.eye(dim_x)
     x[0] = np.matmul(np.linalg.cholesky(P), np.random.randn(batchSize, dim_x, 1))
+    #x[0] = np.matmul(np.linalg.cholesky(P), np.zeros((batchSize, dim_x, 1)))
 
     processNoises = np.matmul(np.linalg.cholesky(Q), np.random.randn(N, batchSize, dim_x, 1))
     measurementNoises = np.matmul(np.linalg.cholesky(R), np.random.randn(N, batchSize, dim_z, 1))
@@ -684,21 +685,19 @@ class playersToolbox:
     def compute_tildeb_j_N(self, u, omega, systemInitState, j, N): # computing for the causal player
         # u is from time 0 up to j-1; omega is from time 0 up to j-2
         batchSize = u.shape[0]
+        tildeY_j_N = self.compute_tildeY_j_N(j, N)
+        initStateContribution = torch.matmul(torch.transpose(tildeY_j_N, 0, 1), systemInitState)
         if j-2 >= 0:
-            tildeY_j_N, tildeJ_j_N, L_j_N = self.compute_tildeY_j_N(j, N), self.compute_tildeJ_j_N(j, N), self.compute_L_j_N(j, N)
-            initStateContribution = torch.matmul(torch.transpose(tildeY_j_N, 0, 1), systemInitState)
+            tildeJ_j_N, L_j_N = self.compute_tildeJ_j_N(j, N), self.compute_L_j_N(j, N)
             pastActions = torch.matmul(torch.transpose(tildeJ_j_N, 0, 1), u)
             pastProccessNoises = torch.matmul(torch.transpose(L_j_N, 0, 1), omega)
             tildeb_j_N = initStateContribution + pastProccessNoises - pastActions
         elif j-1 >= 0:
-            tildeY_j_N, tildeJ_j_N = self.compute_tildeY_j_N(j, N), self.compute_tildeJ_j_N(j, N)
-            initStateContribution = torch.matmul(torch.transpose(tildeY_j_N, 0, 1), systemInitState)
+            tildeJ_j_N = self.compute_tildeJ_j_N(j, N)
             pastActions = torch.matmul(torch.transpose(tildeJ_j_N, 0, 1), u)
             tildeb_j_N = initStateContribution - pastActions
         else:
-            tildeY_j_N = self.compute_tildeY_j_N(j, N)
-            initStateContribution = torch.matmul(torch.transpose(tildeY_j_N, 0, 1), systemInitState)
-            tildeb_j_N = initStateContribution
+            tildeb_j_N = torch.zeros_like(initStateContribution)
 
         return tildeb_j_N
 

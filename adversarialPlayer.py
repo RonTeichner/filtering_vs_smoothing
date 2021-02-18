@@ -11,11 +11,11 @@ import torch.optim as optim
 import pickle
 import time
 
-#np.random.seed(13)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
+np.random.seed(13)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
 dim_x, dim_z = 2, 2
-N = 200  # time steps
-batchSize = 10000
+N = 20  # time steps
+batchSize = 1000
 useCuda = False
 
 enableSmartPlayers = True
