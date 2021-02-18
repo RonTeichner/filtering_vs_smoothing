@@ -360,6 +360,7 @@ def causalPlayer(adversarialPlayersToolbox, u, processNoises, systemInitState):
         u[j] = iter_u[0]
 
         powerUsedSoFar = powerUsedSoFar + torch.sum(torch.pow(u[j:j+1], 2), dim=2, keepdim=True)[0, :, 0, 0]
+        powerUsedSoFar = torch.min(N*torch.ones_like(powerUsedSoFar), powerUsedSoFar)
 
         print(f'adversarial causal player ends {j + 1} out of {N}')
 

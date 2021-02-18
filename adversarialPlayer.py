@@ -14,7 +14,7 @@ import time
 np.random.seed(13)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
 dim_x, dim_z = 2, 2
-N = 20  # time steps
+N = 25  # time steps
 batchSize = 1000
 useCuda = False
 
