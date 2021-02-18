@@ -14,8 +14,8 @@ import time
 #np.random.seed(13)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
 dim_x, dim_z = 2, 2
-N = 5 #  200  # time steps
-batchSize = 1000
+N = 200  # time steps
+batchSize = 10000
 useCuda = False
 
 enableSmartPlayers = True
@@ -60,8 +60,8 @@ if useCuda:
 
 tilde_x_est_f, tilde_x_est_s = pytorchEstimator(tilde_z, filterStateInit)
 # tilde_x_est_f = hat_x_k_plus_1_given_k
-tilde_e_k_given_k_minus_1 = tilde_x_est_f - tilde_x # k is the index so that at tilde_e_k_given_k_minus_1[0] we have tilde_e_0_given_minus_1
-tilde_e_k_given_N_minus_1 = tilde_x_est_s - tilde_x
+tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f # k is the index so that at tilde_e_k_given_k_minus_1[0] we have tilde_e_0_given_minus_1
+tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
 
 print(f'mean energy of tilde_x: ',{watt2dbm(calcTimeSeriesMeanEnergy(tilde_x).mean())},' [dbm]')
 
@@ -71,7 +71,8 @@ caligraphE_S_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_N_minu
 delta_u, delta_caligraphE = 1e-3, 1e-3
 adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, enableSmartPlayers)
 
-tilde_e_k_given_k_minus_1_directCalc = adversarialPlayersToolbox.test_tilde_e_expression(tilde_x[0:1], filterStateInit, processNoises, measurementNoises, tilde_e_k_given_k_minus_1)
+# the next code checks the error expression used by the causal player
+#tilde_e_k_given_k_minus_1_directCalc = adversarialPlayersToolbox.test_tilde_e_expression(tilde_x[0:1], filterStateInit, processNoises, measurementNoises, tilde_e_k_given_k_minus_1)
 
 # No knowledge player:
 u_0 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
@@ -85,7 +86,7 @@ print(f'mean energy of u_0: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_0).mean())},'
 z_0 = tilde_z + torch.matmul(H_transpose, u_0)
 x_0_est_f, x_0_est_s = pytorchEstimator(z_0, filterStateInit)
 
-e_R_0_k_given_k_minus_1 = x_0_est_f - tilde_x
+e_R_0_k_given_k_minus_1 = tilde_x - x_0_est_f
 
 caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1)
 
@@ -96,7 +97,7 @@ if enableSmartPlayers:
         u_1, u_2, u_3 = u_1.cuda(), u_2.cuda(), u_3.cuda()
     u_1, _ = noAccessPlayer(adversarialPlayersToolbox, u_1, torch.zeros_like(tilde_e_k_given_k_minus_1)) # tilde_e_k_given_k_minus_1 is given only for the window size calculation. It is legit
     u_3 = geniePlayer(adversarialPlayersToolbox, u_3, tilde_e_k_given_k_minus_1)
-    u_2 = causalPlayer(adversarialPlayersToolbox, u_2, processNoises)
+    u_2 = causalPlayer(adversarialPlayersToolbox, u_2, processNoises, tilde_x[0:1])
 
     print(f'mean energy of u_1: ',{watt2dbm(calcTimeSeriesMeanEnergy(u_1).mean())},' [dbm]')
     print(f'mean energy of u_2: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_1).mean())}, ' [dbm]')
@@ -105,19 +106,19 @@ if enableSmartPlayers:
     z_1 = tilde_z + torch.matmul(H_transpose, u_1)
     x_1_est_f, x_1_est_s = pytorchEstimator(z_1, filterStateInit)
 
-    e_R_1_k_given_k_minus_1 = x_1_est_f - tilde_x
+    e_R_1_k_given_k_minus_1 = tilde_x - x_1_est_f
     caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1)
 
     z_2 = tilde_z + torch.matmul(H_transpose, u_2)
     x_2_est_f, x_2_est_s = pytorchEstimator(z_2, filterStateInit)
 
-    e_R_2_k_given_k_minus_1 = x_2_est_f - tilde_x
+    e_R_2_k_given_k_minus_1 = tilde_x - x_2_est_f
     caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1)
 
     z_3 = tilde_z + torch.matmul(H_transpose, u_3)
     x_3_est_f, x_3_est_s = pytorchEstimator(z_3, filterStateInit)
 
-    e_R_3_k_given_k_minus_1 = x_3_est_f - tilde_x
+    e_R_3_k_given_k_minus_1 = tilde_x - x_3_est_f
     caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1)
 
 

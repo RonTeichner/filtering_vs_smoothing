@@ -322,7 +322,7 @@ def noKnowledgePlayer(u):
     sigma_u_square = torch.tensor(1 / dim_x, dtype=torch.float)
     return torch.mul(torch.sqrt(sigma_u_square), torch.randn_like(u))
 
-def causalPlayer(adversarialPlayersToolbox, u, processNoises):
+def causalPlayer(adversarialPlayersToolbox, u, processNoises, systemInitState):
     use_cuda = adversarialPlayersToolbox.use_cuda
     N, batchSize, dim_x = u.shape[0], u.shape[1], u.shape[2]
 
@@ -332,6 +332,8 @@ def causalPlayer(adversarialPlayersToolbox, u, processNoises):
         powerUsedSoFar = torch.zeros(batchSize, dtype=torch.float).cuda()
     else:
         powerUsedSoFar = torch.zeros(batchSize, dtype=torch.float)
+
+    systemInitStateBlockVec = systemInitState.permute(1, 0, 2, 3).reshape(batchSize, 1 * dim_x, 1)
 
     for j in range(N):
         print(f'adversarial causal player begins {j+1} out of {N}')
@@ -348,7 +350,7 @@ def causalPlayer(adversarialPlayersToolbox, u, processNoises):
         else:
             omega_past_blockVec = torch.zeros(batchSize, 0, 1, dtype=torch.float)
 
-        tildeb_j_N = adversarialPlayersToolbox.compute_tildeb_j_N(u_past_blockVec, omega_past_blockVec, j, N)
+        tildeb_j_N = - adversarialPlayersToolbox.compute_tildeb_j_N(u_past_blockVec, omega_past_blockVec, systemInitStateBlockVec, j, N)
 
         alpha = N - powerUsedSoFar
 
@@ -374,10 +376,10 @@ def geniePlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
     # note that J_0_N = Xi_N
     J_0_N = (Xi_N, 0, N)
     if use_cuda:
-        tilde_b = torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full).coda()
+        tilde_b = - torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full).coda()
         alpha = N * torch.ones(batchSize, dtype=torch.float).cuda()
     else:
-        tilde_b = torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full)
+        tilde_b = - torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full)
         alpha = N * torch.ones(batchSize, dtype=torch.float)
 
     u_N_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_0_N, tilde_b=tilde_b, alpha=alpha)
@@ -455,6 +457,7 @@ class playersToolbox:
         self.compute_tildeJ_N0_j_N_previous_N_0, self.compute_tildeJ_N0_j_N_previous_j, self.compute_tildeJ_N0_j_N_previous_N = 0, 0, 0
         self.compute_L_j_N_previous_j, self.compute_L_j_N_previous_N = 0, 0
         self.compute_L_N0_j_N_previous_N_0, self.compute_L_N0_j_N_previous_j, self.compute_L_N0_j_N_previous_N = 0, 0, 0
+        self.compute_tildeY_j_N_previous_j, self.compute_tildeY_j_N_previous_N = 0, 0
 
         if self.use_cuda:
             self.K_HT.cuda()
@@ -492,17 +495,17 @@ class playersToolbox:
         summed = torch.zeros_like(filterInitContribution)
         for i in range(np.min((j-2,k-1)) + 1):
             summed = summed + torch.matmul(torch.matrix_power(self.tildeF, k-i-1), processNoises[i:i+1])
-        partKnownToPlayer = filterInitContribution + summed
+        partKnownToPlayer = filterInitContribution + summed.clone()
 
         summed.fill_(0)
         for i in range(np.max((0, j-1)), k):
             summed = summed + torch.matmul(torch.matrix_power(self.tildeF, k - i - 1), (processNoises[i:i + 1] - torch.matmul(self.K, measurementNoises[i:i + 1])))
 
-        partUnknownToPlayer_01 = summed
+        partUnknownToPlayer_01 = summed.clone()
         summed.fill_(0)
         for i in range(np.min((j - 2, k - 1)) + 1):
             summed = summed + torch.matmul(torch.matrix_power(self.tildeF, k - i - 1), torch.matmul(self.K, measurementNoises[i:i + 1]))
-        partUnknownToPlayer_02 = summed
+        partUnknownToPlayer_02 = summed.clone()
         partUnknownToPlayer_03 = torch.matmul(torch.matrix_power(self.tildeF, k), filterStateInit[None, :, :, :])
 
         partUnknownToPlayer = partUnknownToPlayer_01 - partUnknownToPlayer_02 - partUnknownToPlayer_03
@@ -643,6 +646,33 @@ class playersToolbox:
 
         return self.tildeJ_N0_j_N
 
+    def compute_tildeY_j_N(self, j, N):
+        if not(j == self.compute_tildeY_j_N_previous_j and N == self.compute_tildeY_j_N_previous_N):
+            self.compute_tildeY_j_N_previous_j, self.compute_tildeY_j_N_previous_N = j, N
+
+            self.tildeY_j_N = torch.zeros(self.dim_x, (N-j)*self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.tildeY_j_N.cuda()
+
+            for r in range(1):
+                for c in range(N-j):
+                    k = np.max((j, c-j))
+                    self.summed.fill_(0)
+                    if self.use_cuda:
+                        summedItter = torch.tensor(float("inf")).cuda()
+                    else:
+                        summedItter = torch.tensor(float("inf"))
+                    while True:
+                        k += 1
+                        if torch.max(torch.abs(summedItter)) < self.thr or k > N-1:
+                            break
+                        summedItter = torch.matmul(torch.transpose(torch.matrix_power(self.tildeF, k), 1, 0), torch.matrix_power(self.tildeF, k-1-c+j))
+                        self.summed = self.summed + summedItter
+
+                    self.tildeY_j_N[self.dim_x*r:self.dim_x*(r+1), self.dim_x*c:self.dim_x*(c+1)] = torch.matmul(self.summed, self.K_HT)
+
+        return self.tildeY_j_N
+
+
     def compute_tildeb_1(self, blockVec_u, N_0, j, N):
         if blockVec_u.shape[1] == 0:
             tildeb_1 = torch.zeros_like(blockVec_u)
@@ -651,23 +681,24 @@ class playersToolbox:
             tildeb_1 = torch.matmul(torch.transpose(tildeJ_N0_j_N, 1, 0), blockVec_u)
         return tildeb_1
 
-    def compute_tildeb_j_N(self, u, omega, j, N): # computing for the causal player
+    def compute_tildeb_j_N(self, u, omega, systemInitState, j, N): # computing for the causal player
         # u is from time 0 up to j-1; omega is from time 0 up to j-2
         batchSize = u.shape[0]
         if j-2 >= 0:
-            tildeJ_j_N, L_j_N = self.compute_tildeJ_j_N(j, N), self.compute_L_j_N(j, N)
+            tildeY_j_N, tildeJ_j_N, L_j_N = self.compute_tildeY_j_N(j, N), self.compute_tildeJ_j_N(j, N), self.compute_L_j_N(j, N)
+            initStateContribution = torch.matmul(torch.transpose(tildeY_j_N, 0, 1), systemInitState)
             pastActions = torch.matmul(torch.transpose(tildeJ_j_N, 0, 1), u)
             pastProccessNoises = torch.matmul(torch.transpose(L_j_N, 0, 1), omega)
-            tildeb_j_N = pastActions + pastProccessNoises
+            tildeb_j_N = initStateContribution + pastProccessNoises - pastActions
         elif j-1 >= 0:
-            tildeJ_j_N = self.compute_tildeJ_j_N(j, N)
+            tildeY_j_N, tildeJ_j_N = self.compute_tildeY_j_N(j, N), self.compute_tildeJ_j_N(j, N)
+            initStateContribution = torch.matmul(torch.transpose(tildeY_j_N, 0, 1), systemInitState)
             pastActions = torch.matmul(torch.transpose(tildeJ_j_N, 0, 1), u)
-            tildeb_j_N = pastActions
+            tildeb_j_N = initStateContribution - pastActions
         else:
-            if self.use_cuda:
-                tildeb_j_N = torch.zeros(batchSize, N*self.dim_x, dtype=torch.float).cuda()
-            else:
-                tildeb_j_N = torch.zeros(batchSize, N * self.dim_x, dtype=torch.float)
+            tildeY_j_N = self.compute_tildeY_j_N(j, N)
+            initStateContribution = torch.matmul(torch.transpose(tildeY_j_N, 0, 1), systemInitState)
+            tildeb_j_N = initStateContribution
 
         return tildeb_j_N
 
