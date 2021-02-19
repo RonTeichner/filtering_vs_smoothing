@@ -35,9 +35,9 @@ def GenMeasurements(N, batchSize, sysModel):
     dim_x, dim_z = F.shape[0], H.shape[1]
     # generate state
     x, z = np.zeros((N, batchSize, dim_x, 1)), np.zeros((N, batchSize, dim_z, 1))
-    P = np.eye(dim_x)
-    x[0] = np.matmul(np.linalg.cholesky(P), np.random.randn(batchSize, dim_x, 1))
-    #x[0] = np.matmul(np.linalg.cholesky(P), np.zeros((batchSize, dim_x, 1)))
+
+    x[0] = np.matmul(np.linalg.cholesky(Q), np.random.randn(batchSize, dim_x, 1))
+    #x[0] = np.matmul(np.linalg.cholesky(Q), np.zeros((batchSize, dim_x, 1)))
 
     processNoises = np.matmul(np.linalg.cholesky(Q), np.random.randn(N, batchSize, dim_x, 1))
     measurementNoises = np.matmul(np.linalg.cholesky(R), np.random.randn(N, batchSize, dim_z, 1))
