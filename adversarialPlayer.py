@@ -11,6 +11,8 @@ import torch.optim as optim
 import pickle
 import time
 
+fileName = 'sys2D.pt'
+
 np.random.seed(13)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
 dim_x, dim_z = 2, 2
@@ -124,6 +126,8 @@ if enableSmartPlayers:
 
 caligraphE_tVec = np.arange(0, N, 1)
 
+pickle.dump([sysModel, tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit, u_0, u_1, u_2, u_3, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f], open(fileName, 'wb'))
+
 # plotting:
 
 caligraphE_F_minus_1, caligraphE_S_minus_1 = caligraphE_F_minus_1.detach().cpu().numpy(), caligraphE_S_minus_1.detach().cpu().numpy()
@@ -158,6 +162,7 @@ if enableDirctCalcsOnBlockVecs:  # this shows that the gap for E(1) is legit
 if enableSmartPlayers:
     theoretical_caligraphE_F_1 = trace_bar_Sigma + adversarialPlayersToolbox.theoretical_lambda_Xi_N_max.cpu().numpy()
     theoretical_upper_bound = trace_bar_Sigma + adversarialPlayersToolbox.theoretical_lambda_Xi_N_max.cpu().numpy() + 2*np.sqrt(adversarialPlayersToolbox.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max.cpu().numpy()*trace_bar_Sigma)
+
 
 # plotting batch 0:
 
