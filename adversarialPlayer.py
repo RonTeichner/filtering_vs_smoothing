@@ -11,15 +11,17 @@ import torch.optim as optim
 import pickle
 import time
 
-fileName = 'sys2D'
-useCuda = False
+fileName = 'sys1D'
+dim_x, dim_z = 1, 1
 seed = 13
+
+useCuda = False
 
 initialN = 50
 factorN = 1.5
-gapFromInfBound = 0.01  # w.r.t tr{Sigma}
+gapFromInfBound = 1*1e-2  # w.r.t tr{Sigma}
 
-mistakeBound, delta_trS = 1e-1, 10*1e-2
+mistakeBound, delta_trS = 1*1e-2, 1*1e-2
 # P(|bound - estBound| > gamma * Sigma_N) < gamma^{-2} for some gamma > 0
 # I want my error on estimating the bound to be w.r.t tr{Sigma}:
 # I want the probability of mistaking in more than 1% of tr{Sigma} to be less than 1%
@@ -30,7 +32,6 @@ mistakeBound, delta_trS = 1e-1, 10*1e-2
 
 np.random.seed(seed)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
-dim_x, dim_z = 1, 1
 # create a single system model:
 sysModel = GenSysModel(dim_x, dim_z)
 
@@ -73,5 +74,8 @@ while True:
         print(f'genie bound is {watt2dbm(bounds_N[4])} dbm')
         # plotting:
         adversarialPlayerPlotting(currentFileName_N)
+
+        pickle.dump([sysModel, bounds_N, currentFileName_N], open(fileName + '_final_' + '.pt', 'wb'))
+
         break
 
