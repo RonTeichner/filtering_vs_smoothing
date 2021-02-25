@@ -43,17 +43,17 @@ gap_wrt_trSigma = gapFromInfBound * np.trace(Pytorch_filter_smoother_Obj(sysMode
 while True:
     bounds_N, currentFileName_N = runBoundSimulation(sysModel, useCuda, True, N, mistakeBound, delta_trS, fileName)
     # plotting:
-    adversarialPlayerPlotting(currentFileName_N)
+    # adversarialPlayerPlotting(currentFileName_N)
 
     m = int(np.ceil(factorN*N)) - N  # time steps
     bounds_N_plus_m, currentFileName_N_plus_m = runBoundSimulation(sysModel, useCuda, True, N + m, mistakeBound, delta_trS, fileName)
     # plotting:
-    adversarialPlayerPlotting(currentFileName_N_plus_m)
+    # adversarialPlayerPlotting(currentFileName_N_plus_m)
 
     bounds_N_plus_2m, currentFileName_N_plus_2m = runBoundSimulation(sysModel, useCuda, True, N + 2*m, mistakeBound, delta_trS, fileName)
     # plotting:
-    adversarialPlayerPlotting(currentFileName_N_plus_2m)
-    plt.show()
+    # adversarialPlayerPlotting(currentFileName_N_plus_2m)
+    # plt.show()
 
     deltaBounds_N = np.subtract(bounds_N_plus_m, bounds_N)
     deltaBounds_N_plus_m = np.subtract(bounds_N_plus_2m, bounds_N_plus_m)
@@ -67,6 +67,9 @@ while True:
     if gapMax > gap_wrt_trSigma:
         N = N + 3 * m
     else:
+        pickle.dump([sysModel, bounds_N, currentFileName_N, mistakeBound, delta_trS, gapFromInfBound],
+                    open(fileName + '_final_' + '.pt', 'wb'))
+        print('bounds file saved')
         print(f'no player bound is {watt2dbm(bounds_N[0])} dbm')
         print(f'no knowledge bound is {watt2dbm(bounds_N[1])} dbm')
         print(f'no access bound is {watt2dbm(bounds_N[2])} dbm')
@@ -74,8 +77,6 @@ while True:
         print(f'genie bound is {watt2dbm(bounds_N[4])} dbm')
         # plotting:
         adversarialPlayerPlotting(currentFileName_N)
-
-        pickle.dump([sysModel, bounds_N, currentFileName_N], open(fileName + '_final_' + '.pt', 'wb'))
-
+        plt.show()
         break
 
