@@ -31,14 +31,16 @@ def GenSysModel(dim_x, dim_z):
     R = measurementNoiseVar * np.eye(dim_z)
     return {"F": F, "H": H, "Q": Q, "R": R}
 
-def GenMeasurements(N, batchSize, sysModel):
+def GenMeasurements(N, batchSize, sysModel, startAtZero=False):
     F, H, Q, R = sysModel["F"], sysModel["H"], sysModel["Q"], sysModel["R"]
     dim_x, dim_z = F.shape[0], H.shape[1]
     # generate state
     x, z = np.zeros((N, batchSize, dim_x, 1)), np.zeros((N, batchSize, dim_z, 1))
 
-    x[0] = np.matmul(np.linalg.cholesky(Q), np.random.randn(batchSize, dim_x, 1))
-    #x[0] = np.matmul(np.linalg.cholesky(Q), np.zeros((batchSize, dim_x, 1)))
+    if startAtZero:
+        x[0] = np.matmul(np.linalg.cholesky(Q), np.zeros((batchSize, dim_x, 1)))
+    else:
+        x[0] = np.matmul(np.linalg.cholesky(Q), np.random.randn(batchSize, dim_x, 1))
 
     processNoises = np.matmul(np.linalg.cholesky(Q), np.random.randn(N, batchSize, dim_x, 1))
     measurementNoises = np.matmul(np.linalg.cholesky(R), np.random.randn(N, batchSize, dim_z, 1))
@@ -340,7 +342,7 @@ def causalPlayer(adversarialPlayersToolbox, u, processNoises, systemInitState):
     systemInitStateBlockVec = systemInitState.permute(1, 0, 2, 3).reshape(batchSize, 1 * dim_x, 1)
 
     for j in range(N):
-        print(f'adversarial causal player begins {j+1} out of {N}')
+        #print(f'adversarial causal player begins {j+1} out of {N}')
         J_j_N = adversarialPlayersToolbox.compute_J_j_N(j, N)
         J_j_N_tupple = (J_j_N, j, N)
 
@@ -365,7 +367,7 @@ def causalPlayer(adversarialPlayersToolbox, u, processNoises, systemInitState):
         powerUsedSoFar = powerUsedSoFar + torch.sum(torch.pow(u[j:j+1], 2), dim=2, keepdim=True)[0, :, 0, 0]
         powerUsedSoFar = torch.min(N*torch.ones_like(powerUsedSoFar), powerUsedSoFar)
 
-        print(f'adversarial causal player ends {j + 1} out of {N}')
+        #print(f'adversarial causal player ends {j + 1} out of {N}')
 
     return u
 
@@ -471,8 +473,20 @@ class playersToolbox:
             self.thr.cuda()
 
         if enableSmartPlayers:
-            self.compute_lambda_Xi_max(enableFigure=True)
-            self.compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(enableFigure=True)
+            self.compute_lambda_Xi_max(enableFigure=False)
+            self.compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(enableFigure=False)
+            self.compute_bound_on_players_variance()
+
+    def compute_bound_on_players_variance(self):
+        sumOf_3_dim_x_SquareVar = 3 * self.dim_x * torch.pow(torch.diag(self.theoreticalBarSigma), 2).sum()
+        s3 = sumOf_3_dim_x_SquareVar
+        trS = torch.trace(self.theoreticalBarSigma)
+        lXi = self.compute_lambda_Xi_max()
+        lXiBar = self.compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max()
+        part1 = s3 - torch.pow(trS, 2) + torch.pow(lXi, 2) + lXi * torch.sqrt(s3) + 4*lXiBar*trS
+        part2 = 2*torch.sqrt(lXiBar*trS)*(torch.sqrt(s3) + trS + 2*lXi)
+        self.varianceBound = part1 + part2
+        return self.varianceBound
 
     def test_tilde_e_expression(self, systemInitState, filterStateInit, processNoises, measurementNoises, tilde_e_k_given_k_minus_1):
         N, batchSize = processNoises.shape[0], processNoises.shape[1]
@@ -705,7 +719,7 @@ class playersToolbox:
 
         return tildeb_j_N
 
-    def compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(self, enableFigure):
+    def compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(self, enableFigure=False):
         lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, corresponding_eigenvector = list(), list()
         u_0 = np.zeros((1000, self.dim_x, 1))
         N = 0
@@ -738,8 +752,10 @@ class playersToolbox:
         if enableFigure:
             self.lambda_max_figures(lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, u_0, N, corresponding_eigenvector, [r'$\lambda^{\bar{\Xi}_{N}{\bar{\Xi}_{N}}''}_{max}$', r'$\frac{\lambda^{\bar{\Xi}_{N+1}{\bar{\Xi}_{N+1}}''}_{max}}{\lambda^{\bar{\Xi}_{N}{\bar{\Xi}_{N}}''}_{max}}$'])
 
+        return self.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max
 
-    def compute_lambda_Xi_max(self, enableFigure):
+
+    def compute_lambda_Xi_max(self, enableFigure=False):
         lambda_Xi_max, corresponding_eigenvector = list(), list()
         u_0 = np.zeros((1000, self.dim_x, 1))
         N=0
@@ -774,6 +790,8 @@ class playersToolbox:
 
         if enableFigure:
             self.lambda_max_figures(lambda_Xi_max, u_0, N, corresponding_eigenvector, [r'$\lambda^{\Xi_{N}}_{max}$', r'$\frac{\lambda^{\Xi_{N+1}}_{max}}{\lambda^{\Xi_{N}}_{max}}$'])
+
+        return self.theoretical_lambda_Xi_N_max
 
 
     def lambda_max_figures(self, lambda_Xi_max, u_0, N, corresponding_eigenvector, strings):
@@ -882,7 +900,7 @@ class playersToolbox:
         u_delta_violation = torch.max(torch.div(delta_u_energy, u_2N_0_energy))
         u_N_0_violation, u_2N_0_violation = torch.max(torch.div(u_N_0_energy, alpha_over_N_0)), torch.max(torch.div(u_2N_0_energy, alpha_over_2N_0))
         caligraphE_violation = torch.max(torch.div(torch.abs(caligraphE_N0_j - caligraphE_2N0_j), torch.abs(caligraphE_2N0_j)))
-        print(f'window size test: delta u violation: {u_delta_violation}; u_N_0 violation: {u_N_0_violation}; u_2N_0 violation: {u_2N_0_violation}, E violation: {caligraphE_violation}')
+        #print(f'window size test: delta u violation: {u_delta_violation}; u_N_0 violation: {u_N_0_violation}; u_2N_0 violation: {u_2N_0_violation}, E violation: {caligraphE_violation}')
         #print(f'u_2N0_j/u_N0_j: {torch.div(u_2N0_j, u_N0_j)}')
         delta_u_condition = np.min((u_delta_violation.item(), np.max((u_N_0_violation.item(), u_2N_0_violation.item())))) < self.delta_u
         delta_caligraphE_condition = caligraphE_violation < self.delta_caligraphE
@@ -1038,7 +1056,7 @@ class playersToolbox:
 def adversarialPlayerPlotting(fileName):
     savedList = pickle.load(open(fileName, "rb"))
     sysModel, tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit, u_0, u_1, u_2, u_3, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f, \
-    theoreticalBarSigma, normalizedNoKnowledgePlayerContribution, theoretical_lambda_Xi_N_max, lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max = savedList
+    theoreticalBarSigma, normalizedNoKnowledgePlayerContribution, theoretical_lambda_Xi_N_max, lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, bounds = savedList
     enableSmartPlayers = True
 
     print(f'mean energy of tilde_x: ', {watt2dbm(calcTimeSeriesMeanEnergy(tilde_x).mean())}, ' [dbm]')
@@ -1050,27 +1068,25 @@ def adversarialPlayerPlotting(fileName):
     N, batchSize, dim_x = tilde_x.shape[0], tilde_x.shape[1], tilde_x.shape[2]
 
     tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
-    caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1)
+    caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
+    noPlayerBound = caligraphE_F_minus_1[-1]
 
     e_R_0_k_given_k_minus_1 = tilde_x - x_0_est_f
-    caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1)
-
-    caligraphE_F_minus_1 = caligraphE_F_minus_1.detach().cpu().numpy()
-    caligraphE_F_0 = caligraphE_F_0.detach().cpu().numpy()
-
-    e_R_1_k_given_k_minus_1 = tilde_x - x_1_est_f
-    caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1)
-
-    e_R_2_k_given_k_minus_1 = tilde_x - x_2_est_f
-    caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1)
-
-    e_R_3_k_given_k_minus_1 = tilde_x - x_3_est_f
-    caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1)
+    caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
+    noKnowledgePlayerBound = caligraphE_F_0[-1]
 
     if enableSmartPlayers:
-        caligraphE_F_1 = caligraphE_F_1.detach().cpu().numpy()
-        caligraphE_F_2 = caligraphE_F_2.detach().cpu().numpy()
-        caligraphE_F_3 = caligraphE_F_3.detach().cpu().numpy()
+        e_R_1_k_given_k_minus_1 = tilde_x - x_1_est_f
+        caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
+        noAccessPlayerBound = caligraphE_F_1[-1]
+
+        e_R_2_k_given_k_minus_1 = tilde_x - x_2_est_f
+        caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
+        causlaPlayerBound = caligraphE_F_2[-1]
+
+        e_R_3_k_given_k_minus_1 = tilde_x - x_3_est_f
+        caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
+        geniePlayerBound = caligraphE_F_3[-1]
 
     trace_bar_Sigma = np.trace(theoreticalBarSigma.cpu().numpy())
     #trace_bar_Sigma_S = np.trace(pytorchEstimator.theoreticalSmoothingSigma.cpu().numpy())
@@ -1275,8 +1291,8 @@ def adversarialPlayerPlotting(fileName):
     plt.ylim(bottom_absolute, top_absolute)
     plt.subplot(2, 2, 2)
     plt.ylim(bottom_absolute, top_absolute)
-
-    plt.show()
+    #plt.suptitle('This is a somewhat long figure title', fontsize=16)
+    #plt.show()
 
     '''
     # tilde_e_k_given_k_minus_1.detach().cpu().numpy()
@@ -1293,3 +1309,146 @@ def adversarialPlayerPlotting(fileName):
     plt.grid()
     plt.show()
     '''
+
+def computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f):
+    tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
+    caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
+    noPlayerBound = caligraphE_F_minus_1[-1].mean()
+
+    e_R_0_k_given_k_minus_1 = tilde_x - x_0_est_f
+    caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
+    noKnowledgePlayerBound = caligraphE_F_0[-1].mean()
+
+    e_R_1_k_given_k_minus_1 = tilde_x - x_1_est_f
+    caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
+    noAccessPlayerBound = caligraphE_F_1[-1].mean()
+
+    e_R_2_k_given_k_minus_1 = tilde_x - x_2_est_f
+    caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
+    causlaPlayerBound = caligraphE_F_2[-1].mean()
+
+    e_R_3_k_given_k_minus_1 = tilde_x - x_3_est_f
+    caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
+    geniePlayerBound = caligraphE_F_3[-1].mean()
+
+    return noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound
+
+def runBoundSimulation(sysModel, useCuda, enableSmartPlayers, N, mistakeBound, delta_trS, fileName):
+    batchSize = 1  # to be updated later
+
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
+    if useCuda:
+        pytorchEstimator = pytorchEstimator.cuda()
+    pytorchEstimator.eval()
+
+    delta_u, delta_caligraphE = 1e-3, 1e-3
+    adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, enableSmartPlayers)
+    dim_x = adversarialPlayersToolbox.dim_x
+
+    #mistakeBound, delta_trS = 1e-1, 5*1e-2
+    trS = np.trace(adversarialPlayersToolbox.theoreticalBarSigma.cpu().numpy())
+    batchSizeForPerformance = np.ceil((np.round((np.sqrt(1 / mistakeBound) * adversarialPlayersToolbox.varianceBound.cpu().numpy()) / (delta_trS * trS))) / 100) * 100
+    batchSize = int(np.max((batchSize, batchSizeForPerformance)))
+    print(f'batchSize for performance is {batchSizeForPerformance}')
+    # P(|bound - estBound| > gamma * Sigma_N) < gamma^{-2} for some gamma > 0
+    # I want my error on estimating the bound to be w.r.t tr{Sigma}:
+    # I want the probability of mistaking in more than 1% of tr{Sigma} to be less than 1%
+    # So gamma * boundVar/M = delta_trS * tr{Sigma} with delta_trS = 0.01 and M the batchSize
+    # and gamma^{-2} = mistakeBound with mistakeBound = 0.01
+    # therefore gamma = sqrt(1/mistakeBound)
+    # and M = (gamma * boundVar) / (delta_trS * tr{Sigma}) = (sqrt(1/mistakeBound) * boundVar) / (delta_trS * tr{Sigma})
+
+    # create time-series measurements (#time-series == batchSize):
+    tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel)  # z: [N, batchSize, dim_z]
+    tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float), torch.tensor(tilde_x, dtype=torch.float), torch.tensor(processNoises, dtype=torch.float), torch.tensor(measurementNoises, dtype=torch.float)
+    if useCuda:
+        tilde_z, tilde_x, processNoises, measurementNoises = tilde_z.cuda(), tilde_x.cuda(), processNoises.cuda(), measurementNoises.cuda()
+
+    # estimator init values:
+    filter_P_init = pytorchEstimator.theoreticalBarSigma.cpu().numpy()  # filter @ time-series but all filters have the same init
+    filterStateInit = np.matmul(np.linalg.cholesky(filter_P_init), np.random.randn(batchSize, dim_x, 1))
+    print(f'filter init mean error energy w.r.t trace(bar(sigma)): {watt2dbm(np.mean(np.power(np.linalg.norm(filterStateInit, axis=1), 2), axis=0)) - watt2dbm(np.trace(filter_P_init))} db')
+    filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False).contiguous()
+    # filterStateInit = tilde_x[0]
+
+    if useCuda:
+        filterStateInit = filterStateInit.cuda()
+
+    # print(f'F = {sysModel["F"]}; H = {sysModel["H"]}; Q = {sysModel["Q"]}; R = {sysModel["R"]}')
+    H = torch.tensor(sysModel["H"], dtype=torch.float, requires_grad=False)
+    H_transpose = torch.transpose(H, 1, 0)
+    H_transpose = H_transpose.contiguous()
+    if useCuda:
+        H_transpose = H_transpose.cuda()
+
+    tilde_x_est_f, tilde_x_est_s = pytorchEstimator(tilde_z, filterStateInit)
+    # tilde_x_est_f = hat_x_k_plus_1_given_k
+    tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f  # k is the index so that at tilde_e_k_given_k_minus_1[0] we have tilde_e_0_given_minus_1
+    tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
+
+    print(f'mean energy of tilde_x: ', {watt2dbm(calcTimeSeriesMeanEnergy(tilde_x).mean())}, ' [dbm]')
+
+    # the next code checks the error expression used by the causal player
+    # tilde_e_k_given_k_minus_1_directCalc = adversarialPlayersToolbox.test_tilde_e_expression(tilde_x[0:1], filterStateInit, processNoises, measurementNoises, tilde_e_k_given_k_minus_1)
+
+    # No knowledge player:
+    u_0 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
+    if useCuda:
+        u_0 = u_0.cuda()
+    u_0 = noKnowledgePlayer(u_0)
+
+    print(f'mean energy of u_0: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_0).mean())}, ' [dbm]')
+
+    # Kalman filters:
+    z_0 = tilde_z + torch.matmul(H_transpose, u_0)
+    x_0_est_f, x_0_est_s = pytorchEstimator(z_0, filterStateInit)
+
+    # Smart players:
+    if enableSmartPlayers:
+        u_1, u_2, u_3 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float), torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float), torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
+        if useCuda:
+            u_1, u_2, u_3 = u_1.cuda(), u_2.cuda(), u_3.cuda()
+        u_1, _ = noAccessPlayer(adversarialPlayersToolbox, u_1, torch.zeros_like(tilde_e_k_given_k_minus_1))  # tilde_e_k_given_k_minus_1 is given only for the window size calculation. It is legit
+        u_3 = geniePlayer(adversarialPlayersToolbox, u_3, tilde_e_k_given_k_minus_1)
+        u_2 = causalPlayer(adversarialPlayersToolbox, u_2, processNoises, tilde_x[0:1])
+
+        enableTestEnergyFactor = False
+        if enableTestEnergyFactor:
+            u_3_doubleEnergy = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
+            u_3_doubleEnergy = geniePlayer(adversarialPlayersToolbox, u_3_doubleEnergy, tilde_e_k_given_k_minus_1, 2)
+            print(f'mean energy of u_3: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3).mean())}, ' [dbm]')
+            print(f'mean energy of u_3_doubleEnergy: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3_doubleEnergy).mean())}, ' [dbm]')
+            plt.figure()
+            batchIdx = 0
+            plt.plot(volt2dbm(np.linalg.norm(u_3[:, batchIdx:batchIdx + 1].cpu().numpy(), axis=2))[:, 0, 0] - volt2dbm(np.linalg.norm(u_3_doubleEnergy[:, batchIdx:batchIdx + 1].cpu().numpy(), axis=2))[:, 0, 0], label=r'$\frac{||u_N(N)^{(3)}||_2}{||u_N(2N)^{(3)}||_2}$')
+            plt.ylabel('db')
+            plt.xlabel('k')
+            plt.grid()
+            plt.legend()
+            # plt.show()
+
+        print(f'mean energy of u_1: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_1).mean())}, ' [dbm]')
+        print(f'mean energy of u_2: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_1).mean())}, ' [dbm]')
+        print(f'mean energy of u_3: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3).mean())}, ' [dbm]')
+
+        z_1 = tilde_z + torch.matmul(H_transpose, u_1)
+        x_1_est_f, x_1_est_s = pytorchEstimator(z_1, filterStateInit)
+
+        z_2 = tilde_z + torch.matmul(H_transpose, u_2)
+        x_2_est_f, x_2_est_s = pytorchEstimator(z_2, filterStateInit)
+
+        z_3 = tilde_z + torch.matmul(H_transpose, u_3)
+        x_3_est_f, x_3_est_s = pytorchEstimator(z_3, filterStateInit)
+
+        # bounds:
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
+        bounds = (noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound)
+        fileName = fileName + '_N_' + np.array2string(np.array(N)) + '.pt'
+        pickle.dump(
+            [sysModel, tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit, u_0, u_1,
+             u_2, u_3, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f,
+             pytorchEstimator.theoreticalBarSigma, pytorchEstimator.normalizedNoKnowledgePlayerContribution,
+             adversarialPlayersToolbox.theoretical_lambda_Xi_N_max,
+             adversarialPlayersToolbox.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, bounds], open(fileName, 'wb'))
+
+    return bounds, fileName
