@@ -45,12 +45,12 @@ def GenMeasurements(N, batchSize, sysModel, startAtZero=False):
     processNoises = np.matmul(np.linalg.cholesky(Q), np.random.randn(N, batchSize, dim_x, 1))
     measurementNoises = np.matmul(np.linalg.cholesky(R), np.random.randn(N, batchSize, dim_z, 1))
 
-    print(f'amount of energy into the system is {watt2dbm(np.sum(np.power(np.linalg.norm(processNoises[:,0]), 2)))} dbm')
+    print(f'amount of energy into the system is {watt2dbm(np.mean(np.power(np.linalg.norm(processNoises[:,0:1], axis=2, keepdims=True), 2), axis=0)[0,0,0])} dbm')
 
     for i in range(1, N):
         x[i] = np.matmul(F, x[i - 1]) + processNoises[i - 1]
 
-    print(f'amount of energy out from the system is {watt2dbm(np.sum(np.power(np.linalg.norm(x[:,0]), 2)))} dbm')
+    print(f'amount of energy out from the system is {watt2dbm(np.mean(np.power(np.linalg.norm(x[:,0:1], axis=2, keepdims=True), 2), axis=0)[0,0,0])} dbm')
 
     z = np.matmul(H.transpose(), x) + measurementNoises
 
@@ -1055,38 +1055,13 @@ class playersToolbox:
 
 def adversarialPlayerPlotting(fileName):
     savedList = pickle.load(open(fileName, "rb"))
-    sysModel, tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit, u_0, u_1, u_2, u_3, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f, \
+    sysModel, \
+    dim_x, N, \
+    caligraphE_F_minus_1_b, caligraphE_F_minus_1_mean, caligraphE_F_0_b, caligraphE_F_1_b, caligraphE_F_2_b, caligraphE_F_3_b, caligraphE_F_0_mean, caligraphE_F_1_mean, caligraphE_F_2_mean, caligraphE_F_3_mean, \
     theoreticalBarSigma, normalizedNoKnowledgePlayerContribution, theoretical_lambda_Xi_N_max, lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, bounds = savedList
+    #tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit, u_0, u_1, u_2, u_3, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f, \
+
     enableSmartPlayers = True
-
-    print(f'mean energy of tilde_x: ', {watt2dbm(calcTimeSeriesMeanEnergy(tilde_x).mean())}, ' [dbm]')
-    print(f'mean energy of u_0: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_0).mean())}, ' [dbm]')
-    print(f'mean energy of u_1: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_1).mean())}, ' [dbm]')
-    print(f'mean energy of u_2: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_1).mean())}, ' [dbm]')
-    print(f'mean energy of u_3: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3).mean())}, ' [dbm]')
-
-    N, batchSize, dim_x = tilde_x.shape[0], tilde_x.shape[1], tilde_x.shape[2]
-
-    tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
-    caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
-    noPlayerBound = caligraphE_F_minus_1[-1]
-
-    e_R_0_k_given_k_minus_1 = tilde_x - x_0_est_f
-    caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
-    noKnowledgePlayerBound = caligraphE_F_0[-1]
-
-    if enableSmartPlayers:
-        e_R_1_k_given_k_minus_1 = tilde_x - x_1_est_f
-        caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
-        noAccessPlayerBound = caligraphE_F_1[-1]
-
-        e_R_2_k_given_k_minus_1 = tilde_x - x_2_est_f
-        caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
-        causlaPlayerBound = caligraphE_F_2[-1]
-
-        e_R_3_k_given_k_minus_1 = tilde_x - x_3_est_f
-        caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
-        geniePlayerBound = caligraphE_F_3[-1]
 
     trace_bar_Sigma = np.trace(theoreticalBarSigma.cpu().numpy())
     #trace_bar_Sigma_S = np.trace(pytorchEstimator.theoreticalSmoothingSigma.cpu().numpy())
@@ -1114,40 +1089,19 @@ def adversarialPlayerPlotting(fileName):
         theoretical_upper_bound = trace_bar_Sigma + theoretical_lambda_Xi_N_max.cpu().numpy() + 2 * np.sqrt(lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max.cpu().numpy() * trace_bar_Sigma)
 
     # plotting batch 0:
-    batchIdx = 0
-
-    print(
-        f'pure kalman performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_minus_1[-1])) - watt2dbm(np.mean(caligraphE_F_minus_1[-1]))} db')
-    print(
-        f'no knowledge player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_0[-1])) - watt2dbm(np.mean(caligraphE_F_0[-1]))} db')
-    if enableSmartPlayers:
+    enableStdVsMean = False
+    if enableStdVsMean:
         print(
-            f'no access player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_1[-1])) - watt2dbm(np.mean(caligraphE_F_1[-1]))} db')
+            f'pure kalman performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_minus_1[-1])) - watt2dbm(np.mean(caligraphE_F_minus_1[-1]))} db')
         print(
-            f'causal player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_2[-1])) - watt2dbm(np.mean(caligraphE_F_2[-1]))} db')
-        print(
-            f'genie player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_3[-1])) - watt2dbm(np.mean(caligraphE_F_3[-1]))} db')
-
-    caligraphE_F_minus_1_b = caligraphE_F_minus_1[:, batchIdx]  # watt
-    #caligraphE_S_minus_1_b = caligraphE_S_minus_1[:, batchIdx]
-
-    caligraphE_F_minus_1_mean = np.mean(caligraphE_F_minus_1, axis=1)  # watt
-    # caligraphE_F_minus_1_mean = np.power(np.mean(np.sqrt(caligraphE_F_minus_1), axis=1), 2)  # watt
-    #caligraphE_S_minus_1_mean = np.mean(caligraphE_S_minus_1, axis=1)  # watt
-
-    caligraphE_F_0_b = caligraphE_F_0[:, batchIdx]
-    caligraphE_F_0_mean = np.mean(caligraphE_F_0, axis=1)  # watt
-    # caligraphE_F_0_mean = np.power(np.mean(np.sqrt(caligraphE_F_0), axis=1), 2)  # watt
-
-    if enableSmartPlayers:
-        caligraphE_F_1_b = caligraphE_F_1[:, batchIdx]
-        caligraphE_F_1_mean = np.mean(caligraphE_F_1, axis=1)  # watt
-
-        caligraphE_F_2_b = caligraphE_F_2[:, batchIdx]
-        caligraphE_F_2_mean = np.mean(caligraphE_F_2, axis=1)  # watt
-
-        caligraphE_F_3_b = caligraphE_F_3[:, batchIdx]
-        caligraphE_F_3_mean = np.mean(caligraphE_F_3, axis=1)  # watt
+            f'no knowledge player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_0[-1])) - watt2dbm(np.mean(caligraphE_F_0[-1]))} db')
+        if enableSmartPlayers:
+            print(
+                f'no access player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_1[-1])) - watt2dbm(np.mean(caligraphE_F_1[-1]))} db')
+            print(
+                f'causal player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_2[-1])) - watt2dbm(np.mean(caligraphE_F_2[-1]))} db')
+            print(
+                f'genie player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_3[-1])) - watt2dbm(np.mean(caligraphE_F_3[-1]))} db')
 
     caligraphE_tVec = np.arange(0, N, 1)
 
@@ -1294,21 +1248,6 @@ def adversarialPlayerPlotting(fileName):
     #plt.suptitle('This is a somewhat long figure title', fontsize=16)
     #plt.show()
 
-    '''
-    # tilde_e_k_given_k_minus_1.detach().cpu().numpy()
-    tilde_x = tilde_x.detach().cpu().numpy()[:,0,0,0]
-    tilde_e_k_given_k_minus_1 = tilde_e_k_given_k_minus_1.detach().cpu().numpy()[:,0,0,0]
-    tilde_z = tilde_z.detach().cpu().numpy()[:,0,0,0]
-    tilde_x_est_f = tilde_x_est_f.detach().cpu().numpy()[:,0,0,0]
-    plt.plot(tilde_x, label = r'$\tilde{x}$')
-    plt.plot(tilde_z, label = r'$z$')
-    plt.plot(tilde_x_est_f, label = r'$\hat{\tilde{x}}$')
-    plt.plot(tilde_e_k_given_k_minus_1, label = r'$\tilde{e}$')
-    plt.plot(np.cumsum(tilde_e_k_given_k_minus_1), label = r'$\sum\tilde{e}$')
-    plt.legend()
-    plt.grid()
-    plt.show()
-    '''
 
 def computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f):
     tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
@@ -1333,8 +1272,9 @@ def computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_e
 
     return noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound
 
-def runBoundSimulation(sysModel, useCuda, enableSmartPlayers, N, mistakeBound, delta_trS, fileName):
+def runBoundSimulation(sysModel, useCuda, enableSmartPlayers, N, mistakeBound, delta_trS, enableCausalPlayer, fileName):
     batchSize = 1  # to be updated later
+    minBatchSize = 1000
 
     pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
     if useCuda:
@@ -1347,7 +1287,7 @@ def runBoundSimulation(sysModel, useCuda, enableSmartPlayers, N, mistakeBound, d
 
     #mistakeBound, delta_trS = 1e-1, 5*1e-2
     trS = np.trace(adversarialPlayersToolbox.theoreticalBarSigma.cpu().numpy())
-    batchSizeForPerformance = np.ceil((np.round((np.sqrt(1 / mistakeBound) * adversarialPlayersToolbox.varianceBound.cpu().numpy()) / (delta_trS * trS))) / 100) * 100
+    batchSizeForPerformance = np.ceil((np.round((np.sqrt(1 / mistakeBound) * adversarialPlayersToolbox.varianceBound.cpu().numpy()) / (delta_trS * trS))) / minBatchSize) * minBatchSize
     batchSize = int(np.max((batchSize, batchSizeForPerformance)))
     print(f'batchSize for performance is {batchSizeForPerformance}')
     # P(|bound - estBound| > gamma * Sigma_N) < gamma^{-2} for some gamma > 0
@@ -1357,7 +1297,40 @@ def runBoundSimulation(sysModel, useCuda, enableSmartPlayers, N, mistakeBound, d
     # and gamma^{-2} = mistakeBound with mistakeBound = 0.01
     # therefore gamma = sqrt(1/mistakeBound)
     # and M = (gamma * boundVar) / (delta_trS * tr{Sigma}) = (sqrt(1/mistakeBound) * boundVar) / (delta_trS * tr{Sigma})
+    nBatchIters = int(batchSize/minBatchSize)
+    for batchIter in range(nBatchIters):
+        caligraphE_F_minus_1_b, caligraphE_F_minus_1_mean_batch, \
+        caligraphE_F_0_b, caligraphE_F_1_b, caligraphE_F_2_b, caligraphE_F_3_b, \
+        caligraphE_F_0_mean_batch, caligraphE_F_1_mean_batch, caligraphE_F_2_mean_batch, caligraphE_F_3_mean_batch, bounds_batch\
+            = runBoundSimBatch(N, minBatchSize, sysModel, useCuda, pytorchEstimator, adversarialPlayersToolbox, dim_x, enableSmartPlayers, enableCausalPlayer)
 
+        if batchIter == 0:
+            caligraphE_F_minus_1_mean, caligraphE_F_0_mean, caligraphE_F_1_mean, caligraphE_F_2_mean, caligraphE_F_3_mean, bounds = caligraphE_F_minus_1_mean_batch, caligraphE_F_0_mean_batch, caligraphE_F_1_mean_batch, caligraphE_F_2_mean_batch, caligraphE_F_3_mean_batch, bounds_batch
+        else:
+            caligraphE_F_minus_1_mean = np.divide(batchIter * caligraphE_F_minus_1_mean + caligraphE_F_minus_1_mean_batch, batchIter + 1)
+            caligraphE_F_0_mean = np.divide(batchIter * caligraphE_F_0_mean + caligraphE_F_0_mean_batch, batchIter + 1)
+            caligraphE_F_1_mean = np.divide(batchIter * caligraphE_F_1_mean + caligraphE_F_1_mean_batch, batchIter + 1)
+            caligraphE_F_2_mean = np.divide(batchIter * caligraphE_F_2_mean + caligraphE_F_2_mean_batch, batchIter + 1)
+            caligraphE_F_3_mean = np.divide(batchIter * caligraphE_F_3_mean + caligraphE_F_3_mean_batch, batchIter + 1)
+            bounds = np.divide(np.add(np.multiply(batchIter, bounds), bounds_batch), batchIter + 1)
+
+    fileName = fileName + '_N_' + np.array2string(np.array(N)) + '.pt'
+
+    pickle.dump(
+        [sysModel, dim_x, N,
+         caligraphE_F_minus_1_b, caligraphE_F_minus_1_mean,
+         caligraphE_F_0_b, caligraphE_F_1_b, caligraphE_F_2_b, caligraphE_F_3_b,
+         caligraphE_F_0_mean, caligraphE_F_1_mean, caligraphE_F_2_mean, caligraphE_F_3_mean, \
+         #tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit,
+         #u_0, u_1, u_2, u_3,
+         #tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f,
+         pytorchEstimator.theoreticalBarSigma, pytorchEstimator.normalizedNoKnowledgePlayerContribution,
+         adversarialPlayersToolbox.theoretical_lambda_Xi_N_max, adversarialPlayersToolbox.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max,
+         bounds], open(fileName, 'wb'))
+
+    return bounds, fileName
+
+def runBoundSimBatch(N, batchSize, sysModel, useCuda, pytorchEstimator, adversarialPlayersToolbox, dim_x, enableSmartPlayers, enableCausalPlayer):
     # create time-series measurements (#time-series == batchSize):
     tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel)  # z: [N, batchSize, dim_z]
     tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float), torch.tensor(tilde_x, dtype=torch.float), torch.tensor(processNoises, dtype=torch.float), torch.tensor(measurementNoises, dtype=torch.float)
@@ -1410,17 +1383,23 @@ def runBoundSimulation(sysModel, useCuda, enableSmartPlayers, N, mistakeBound, d
             u_1, u_2, u_3 = u_1.cuda(), u_2.cuda(), u_3.cuda()
         u_1, _ = noAccessPlayer(adversarialPlayersToolbox, u_1, torch.zeros_like(tilde_e_k_given_k_minus_1))  # tilde_e_k_given_k_minus_1 is given only for the window size calculation. It is legit
         u_3 = geniePlayer(adversarialPlayersToolbox, u_3, tilde_e_k_given_k_minus_1)
-        u_2 = causalPlayer(adversarialPlayersToolbox, u_2, processNoises, tilde_x[0:1])
+        if enableCausalPlayer:
+            u_2 = causalPlayer(adversarialPlayersToolbox, u_2, processNoises, tilde_x[0:1])
+        else:
+            u_2 = u_3
 
         enableTestEnergyFactor = False
         if enableTestEnergyFactor:
             u_3_doubleEnergy = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
             u_3_doubleEnergy = geniePlayer(adversarialPlayersToolbox, u_3_doubleEnergy, tilde_e_k_given_k_minus_1, 2)
             print(f'mean energy of u_3: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3).mean())}, ' [dbm]')
-            print(f'mean energy of u_3_doubleEnergy: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3_doubleEnergy).mean())}, ' [dbm]')
+            print(f'mean energy of u_3_doubleEnergy: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3_doubleEnergy).mean())},
+                  ' [dbm]')
             plt.figure()
             batchIdx = 0
-            plt.plot(volt2dbm(np.linalg.norm(u_3[:, batchIdx:batchIdx + 1].cpu().numpy(), axis=2))[:, 0, 0] - volt2dbm(np.linalg.norm(u_3_doubleEnergy[:, batchIdx:batchIdx + 1].cpu().numpy(), axis=2))[:, 0, 0], label=r'$\frac{||u_N(N)^{(3)}||_2}{||u_N(2N)^{(3)}||_2}$')
+            plt.plot(volt2dbm(np.linalg.norm(u_3[:, batchIdx:batchIdx + 1].cpu().numpy(), axis=2))[:, 0, 0] - volt2dbm(
+                np.linalg.norm(u_3_doubleEnergy[:, batchIdx:batchIdx + 1].cpu().numpy(), axis=2))[:, 0, 0],
+                     label=r'$\frac{||u_N(N)^{(3)}||_2}{||u_N(2N)^{(3)}||_2}$')
             plt.ylabel('db')
             plt.xlabel('k')
             plt.grid()
@@ -1443,12 +1422,52 @@ def runBoundSimulation(sysModel, useCuda, enableSmartPlayers, N, mistakeBound, d
         # bounds:
         noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
         bounds = (noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound)
-        fileName = fileName + '_N_' + np.array2string(np.array(N)) + '.pt'
-        pickle.dump(
-            [sysModel, tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit, u_0, u_1,
-             u_2, u_3, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f,
-             pytorchEstimator.theoreticalBarSigma, pytorchEstimator.normalizedNoKnowledgePlayerContribution,
-             adversarialPlayersToolbox.theoretical_lambda_Xi_N_max,
-             adversarialPlayersToolbox.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, bounds], open(fileName, 'wb'))
 
-    return bounds, fileName
+        print(f'mean energy of tilde_x: ', {watt2dbm(calcTimeSeriesMeanEnergy(tilde_x).mean())}, ' [dbm]')
+        print(f'mean energy of u_0: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_0).mean())}, ' [dbm]')
+        print(f'mean energy of u_1: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_1).mean())}, ' [dbm]')
+        print(f'mean energy of u_2: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_1).mean())}, ' [dbm]')
+        print(f'mean energy of u_3: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3).mean())}, ' [dbm]')
+
+        N, batchSize, dim_x = tilde_x.shape[0], tilde_x.shape[1], tilde_x.shape[2]
+
+        tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
+        caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
+
+        e_R_0_k_given_k_minus_1 = tilde_x - x_0_est_f
+        caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
+
+        if enableSmartPlayers:
+            e_R_1_k_given_k_minus_1 = tilde_x - x_1_est_f
+            caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
+
+            e_R_2_k_given_k_minus_1 = tilde_x - x_2_est_f
+            caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
+
+            e_R_3_k_given_k_minus_1 = tilde_x - x_3_est_f
+            caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
+
+        batchIdx = 0
+
+        caligraphE_F_minus_1_b = caligraphE_F_minus_1[:, batchIdx]  # watt
+        # caligraphE_S_minus_1_b = caligraphE_S_minus_1[:, batchIdx]
+
+        caligraphE_F_minus_1_mean = np.mean(caligraphE_F_minus_1, axis=1)  # watt
+        # caligraphE_F_minus_1_mean = np.power(np.mean(np.sqrt(caligraphE_F_minus_1), axis=1), 2)  # watt
+        # caligraphE_S_minus_1_mean = np.mean(caligraphE_S_minus_1, axis=1)  # watt
+
+        caligraphE_F_0_b = caligraphE_F_0[:, batchIdx]
+        caligraphE_F_0_mean = np.mean(caligraphE_F_0, axis=1)  # watt
+        # caligraphE_F_0_mean = np.power(np.mean(np.sqrt(caligraphE_F_0), axis=1), 2)  # watt
+
+        if enableSmartPlayers:
+            caligraphE_F_1_b = caligraphE_F_1[:, batchIdx]
+            caligraphE_F_1_mean = np.mean(caligraphE_F_1, axis=1)  # watt
+
+            caligraphE_F_2_b = caligraphE_F_2[:, batchIdx]
+            caligraphE_F_2_mean = np.mean(caligraphE_F_2, axis=1)  # watt
+
+            caligraphE_F_3_b = caligraphE_F_3[:, batchIdx]
+            caligraphE_F_3_mean = np.mean(caligraphE_F_3, axis=1)  # watt
+
+    return caligraphE_F_minus_1_b, caligraphE_F_minus_1_mean, caligraphE_F_0_b, caligraphE_F_1_b, caligraphE_F_2_b, caligraphE_F_3_b, caligraphE_F_0_mean, caligraphE_F_1_mean, caligraphE_F_2_mean, caligraphE_F_3_mean, bounds

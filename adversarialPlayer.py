@@ -11,15 +11,15 @@ import torch.optim as optim
 import pickle
 import time
 
-fileName = 'sys1D'
-dim_x, dim_z = 1, 1
+fileName = 'sys2D'
+dim_x, dim_z = 2, 2
 seed = 13
 
 useCuda = False
 
-initialN = 50
+initialN = 200
 factorN = 1.5
-gapFromInfBound = 1*1e-2  # w.r.t tr{Sigma}
+gapFromInfBound = 5*1e-2  # w.r.t tr{Sigma}
 
 mistakeBound, delta_trS = 1*1e-2, 1*1e-2
 # P(|bound - estBound| > gamma * Sigma_N) < gamma^{-2} for some gamma > 0
@@ -38,19 +38,20 @@ sysModel = GenSysModel(dim_x, dim_z)
 # calc bound on initialN:
 N = initialN
 
-gap_wrt_trSigma = gapFromInfBound * np.trace(Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=False).theoreticalBarSigma.cpu().numpy())
-
+trS = np.trace(Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=False).theoreticalBarSigma.cpu().numpy())
+gap_wrt_trSigma = gapFromInfBound * trS
+enableCausalPlayer = False  # fastest run
 while True:
-    bounds_N, currentFileName_N = runBoundSimulation(sysModel, useCuda, True, N, mistakeBound, delta_trS, fileName)
+    bounds_N, currentFileName_N = runBoundSimulation(sysModel, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, fileName)
     # plotting:
     # adversarialPlayerPlotting(currentFileName_N)
 
     m = int(np.ceil(factorN*N)) - N  # time steps
-    bounds_N_plus_m, currentFileName_N_plus_m = runBoundSimulation(sysModel, useCuda, True, N + m, mistakeBound, delta_trS, fileName)
+    bounds_N_plus_m, currentFileName_N_plus_m = runBoundSimulation(sysModel, useCuda, True, N + m, mistakeBound, delta_trS, enableCausalPlayer, fileName)
     # plotting:
     # adversarialPlayerPlotting(currentFileName_N_plus_m)
 
-    bounds_N_plus_2m, currentFileName_N_plus_2m = runBoundSimulation(sysModel, useCuda, True, N + 2*m, mistakeBound, delta_trS, fileName)
+    bounds_N_plus_2m, currentFileName_N_plus_2m = runBoundSimulation(sysModel, useCuda, True, N + 2*m, mistakeBound, delta_trS, enableCausalPlayer, fileName)
     # plotting:
     # adversarialPlayerPlotting(currentFileName_N_plus_2m)
     # plt.show()
@@ -63,10 +64,14 @@ while True:
     boundsAtInf = bounds_N + np.divide(deltaBounds_N, 1 - alpha_N_m)
     gapMax = np.max(np.abs(np.subtract(boundsAtInf, bounds_N)))
 
-    print(f'max gap from inf is {watt2dbm(gapMax)} dbm')
+    print(f'max gap from inf is {watt2dbm(gapMax) - watt2dbm(trS)} db w.r.t tr(Sigma)')
     if gapMax > gap_wrt_trSigma:
         N = N + 3 * m
     else:
+        if not enableCausalPlayer:
+            enableCausalPlayer = True
+            continue
+
         pickle.dump([sysModel, bounds_N, currentFileName_N, mistakeBound, delta_trS, gapFromInfBound],
                     open(fileName + '_final_' + '.pt', 'wb'))
         print('bounds file saved')
