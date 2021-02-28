@@ -17,9 +17,9 @@ seed = 13
 
 useCuda = False
 
-initialN = 200
+initialN = 50
 factorN = 1.5
-gapFromInfBound = 5*1e-2  # w.r.t tr{Sigma}
+gapFromInfBound = 1*1e-2  # w.r.t tr{Sigma}
 
 mistakeBound, delta_trS = 1*1e-2, 1*1e-2
 # P(|bound - estBound| > gamma * Sigma_N) < gamma^{-2} for some gamma > 0
@@ -41,17 +41,34 @@ N = initialN
 trS = np.trace(Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=False).theoreticalBarSigma.cpu().numpy())
 gap_wrt_trSigma = gapFromInfBound * trS
 enableCausalPlayer = False  # fastest run
+
+pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
+if useCuda:
+    pytorchEstimator = pytorchEstimator.cuda()
+pytorchEstimator.eval()
+
+delta_u, delta_caligraphE = 1e-3, 1e-3
+adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, True)
+usePreviousRoundResults = False
 while True:
-    bounds_N, currentFileName_N = runBoundSimulation(sysModel, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, fileName)
+    if usePreviousRoundResults:
+        bounds_N, currentFileName_N = bounds_N_plus_m, currentFileName_N_plus_m
+    else:
+        bounds_N, currentFileName_N = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, fileName)
     # plotting:
     # adversarialPlayerPlotting(currentFileName_N)
 
-    m = int(np.ceil(factorN*N)) - N  # time steps
-    bounds_N_plus_m, currentFileName_N_plus_m = runBoundSimulation(sysModel, useCuda, True, N + m, mistakeBound, delta_trS, enableCausalPlayer, fileName)
+    if not usePreviousRoundResults:
+        m = int(np.ceil(factorN*N)) - N  # time steps
+
+    if usePreviousRoundResults:
+        bounds_N_plus_m, currentFileName_N_plus_m = bounds_N_plus_2m, currentFileName_N_plus_2m
+    else:
+        bounds_N_plus_m, currentFileName_N_plus_m = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, True, N + m, mistakeBound, delta_trS, enableCausalPlayer, fileName)
     # plotting:
     # adversarialPlayerPlotting(currentFileName_N_plus_m)
 
-    bounds_N_plus_2m, currentFileName_N_plus_2m = runBoundSimulation(sysModel, useCuda, True, N + 2*m, mistakeBound, delta_trS, enableCausalPlayer, fileName)
+    bounds_N_plus_2m, currentFileName_N_plus_2m = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, True, N + 2*m, mistakeBound, delta_trS, enableCausalPlayer, fileName)
     # plotting:
     # adversarialPlayerPlotting(currentFileName_N_plus_2m)
     # plt.show()
@@ -66,10 +83,12 @@ while True:
 
     print(f'max gap from inf is {watt2dbm(gapMax) - watt2dbm(trS)} db w.r.t tr(Sigma)')
     if gapMax > gap_wrt_trSigma:
-        N = N + 3 * m
+        N = N + m
+        usePreviousRoundResults = True
     else:
         if not enableCausalPlayer:
             enableCausalPlayer = True
+            usePreviousRoundResults = False
             continue
 
         pickle.dump([sysModel, bounds_N, currentFileName_N, mistakeBound, delta_trS, gapFromInfBound],

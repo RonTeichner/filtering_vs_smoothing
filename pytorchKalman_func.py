@@ -31,7 +31,7 @@ def GenSysModel(dim_x, dim_z):
     R = measurementNoiseVar * np.eye(dim_z)
     return {"F": F, "H": H, "Q": Q, "R": R}
 
-def GenMeasurements(N, batchSize, sysModel, startAtZero=False):
+def GenMeasurements(N, batchSize, sysModel, startAtZero=False, dp=True):
     F, H, Q, R = sysModel["F"], sysModel["H"], sysModel["Q"], sysModel["R"]
     dim_x, dim_z = F.shape[0], H.shape[1]
     # generate state
@@ -45,12 +45,12 @@ def GenMeasurements(N, batchSize, sysModel, startAtZero=False):
     processNoises = np.matmul(np.linalg.cholesky(Q), np.random.randn(N, batchSize, dim_x, 1))
     measurementNoises = np.matmul(np.linalg.cholesky(R), np.random.randn(N, batchSize, dim_z, 1))
 
-    print(f'amount of energy into the system is {watt2dbm(np.mean(np.power(np.linalg.norm(processNoises[:,0:1], axis=2, keepdims=True), 2), axis=0)[0,0,0])} dbm')
+    if dp: print(f'amount of energy into the system is {watt2dbm(np.mean(np.power(np.linalg.norm(processNoises[:,0:1], axis=2, keepdims=True), 2), axis=0)[0,0,0])} dbm')
 
     for i in range(1, N):
         x[i] = np.matmul(F, x[i - 1]) + processNoises[i - 1]
 
-    print(f'amount of energy out from the system is {watt2dbm(np.mean(np.power(np.linalg.norm(x[:,0:1], axis=2, keepdims=True), 2), axis=0)[0,0,0])} dbm')
+    if dp: print(f'amount of energy out from the system is {watt2dbm(np.mean(np.power(np.linalg.norm(x[:,0:1], axis=2, keepdims=True), 2), axis=0)[0,0,0])} dbm')
 
     z = np.matmul(H.transpose(), x) + measurementNoises
 
@@ -934,6 +934,7 @@ class playersToolbox:
         #    self.J_j_N_eig = torch.symeig(self.compute_J_j_N(j, N), eigenvectors=True)
         key = 'j == ' + str(j) + '; N == ' + str(N)
         if key not in self.compute_J_j_N_eig_dict:
+            print('calculating eigenvalues for J_j_N: ' + key)
             self.compute_J_j_N_eig_dict[key] =  torch.symeig(self.compute_J_j_N(j, N), eigenvectors=True)
         self.J_j_N_eig = self.compute_J_j_N_eig_dict[key]
         return self.J_j_N_eig
@@ -1277,17 +1278,10 @@ def computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_e
 
     return noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound
 
-def runBoundSimulation(sysModel, useCuda, enableSmartPlayers, N, mistakeBound, delta_trS, enableCausalPlayer, fileName):
+def runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, enableSmartPlayers, N, mistakeBound, delta_trS, enableCausalPlayer, fileName):
     batchSize = 1  # to be updated later
     minBatchSize = 1000
 
-    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
-    if useCuda:
-        pytorchEstimator = pytorchEstimator.cuda()
-    pytorchEstimator.eval()
-
-    delta_u, delta_caligraphE = 1e-3, 1e-3
-    adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, enableSmartPlayers)
     dim_x = adversarialPlayersToolbox.dim_x
 
     #mistakeBound, delta_trS = 1e-1, 5*1e-2
@@ -1337,7 +1331,7 @@ def runBoundSimulation(sysModel, useCuda, enableSmartPlayers, N, mistakeBound, d
 
 def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adversarialPlayersToolbox, dim_x, enableSmartPlayers, enableCausalPlayer):
     # create time-series measurements (#time-series == batchSize):
-    tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel)  # z: [N, batchSize, dim_z]
+    tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel, startAtZero=False, dp=dp)  # z: [N, batchSize, dim_z]
     tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float), torch.tensor(tilde_x, dtype=torch.float), torch.tensor(processNoises, dtype=torch.float), torch.tensor(measurementNoises, dtype=torch.float)
     if useCuda:
         tilde_z, tilde_x, processNoises, measurementNoises = tilde_z.cuda(), tilde_x.cuda(), processNoises.cuda(), measurementNoises.cuda()
