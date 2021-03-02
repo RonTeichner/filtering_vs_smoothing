@@ -11,7 +11,24 @@ import torch.optim as optim
 import pickle
 import time
 
-fileName = 'sys2D'
+enablePlotOnly = True
+fileName = 'sys2D_secondTry'
+
+if enablePlotOnly:
+    savedList = pickle.load(open(fileName + '_final_' + '.pt', "rb"))
+    sysModel, bounds_N, currentFileName_N, bounds_N_plus_m, currentFileName_N_plus_m, bounds_N_plus_2m, currentFileName_N_plus_2m, mistakeBound, delta_trS, gapFromInfBound = savedList
+    print('bounds file loaded')
+    print(f'no player bound is {watt2dbm(bounds_N[0])} dbm')
+    print(f'no knowledge bound is {watt2dbm(bounds_N[1])} dbm')
+    print(f'no access bound is {watt2dbm(bounds_N[2])} dbm')
+    print(f'causal bound is {watt2dbm(bounds_N[3])} dbm')
+    print(f'genie bound is {watt2dbm(bounds_N[4])} dbm')
+    # plotting:
+    adversarialPlayerPlotting(currentFileName_N_plus_2m)
+    plt.show()
+    exit()
+
+
 dim_x, dim_z = 2, 2
 seed = 13
 
@@ -19,7 +36,7 @@ useCuda = False
 
 initialN = 50
 factorN = 1.5
-gapFromInfBound = 1*1e-2  # w.r.t tr{Sigma}
+gapFromInfBound = 5*1e-2  # w.r.t tr{Sigma}
 
 mistakeBound, delta_trS = 1*1e-2, 1*1e-2
 # P(|bound - estBound| > gamma * Sigma_N) < gamma^{-2} for some gamma > 0
@@ -91,7 +108,7 @@ while True:
             usePreviousRoundResults = False
             continue
 
-        pickle.dump([sysModel, bounds_N, currentFileName_N, mistakeBound, delta_trS, gapFromInfBound],
+        pickle.dump([sysModel, bounds_N, currentFileName_N, bounds_N_plus_m, currentFileName_N_plus_m, bounds_N_plus_2m, currentFileName_N_plus_2m, mistakeBound, delta_trS, gapFromInfBound],
                     open(fileName + '_final_' + '.pt', 'wb'))
         print('bounds file saved')
         print(f'no player bound is {watt2dbm(bounds_N[0])} dbm')
@@ -100,7 +117,7 @@ while True:
         print(f'causal bound is {watt2dbm(bounds_N[3])} dbm')
         print(f'genie bound is {watt2dbm(bounds_N[4])} dbm')
         # plotting:
-        adversarialPlayerPlotting(currentFileName_N)
+        adversarialPlayerPlotting(currentFileName_N_plus_2m)
         plt.show()
         break
 
