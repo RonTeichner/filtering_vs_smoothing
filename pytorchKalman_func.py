@@ -1067,6 +1067,8 @@ def adversarialPlayerPlotting(fileName):
     theoreticalBarSigma, normalizedNoKnowledgePlayerContribution, theoretical_lambda_Xi_N_max, lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, bounds = savedList
     #tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit, u_0, u_1, u_2, u_3, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f, \
 
+    print(f'F = {sysModel["F"]}; H = {sysModel["H"]}; Q = {sysModel["Q"]}; R = {sysModel["R"]}')
+
     enableSmartPlayers = True
 
     trace_bar_Sigma = np.trace(theoreticalBarSigma.cpu().numpy())
@@ -1093,6 +1095,7 @@ def adversarialPlayerPlotting(fileName):
     if enableSmartPlayers:
         theoretical_caligraphE_F_1 = trace_bar_Sigma + theoretical_lambda_Xi_N_max.cpu().numpy()
         theoretical_upper_bound = trace_bar_Sigma + theoretical_lambda_Xi_N_max.cpu().numpy() + 2 * np.sqrt(lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max.cpu().numpy() * trace_bar_Sigma)
+        print(f'theoretical upper bound is {watt2dbm(theoretical_upper_bound)} dbm; {watt2dbm(theoretical_upper_bound) - watt2dbm(trace_bar_Sigma)} db')
 
     # plotting batch 0:
     enableStdVsMean = False
@@ -1253,6 +1256,35 @@ def adversarialPlayerPlotting(fileName):
     plt.ylim(bottom_absolute, top_absolute)
     #plt.suptitle('This is a somewhat long figure title', fontsize=16)
     #plt.show()
+
+    plt.figure()
+    plt.title(r'$\frac{1}{n}\sum_{k=0}^{n-1} ||e^R_{k \mid k-1}||_2^2$ (w.r.t $\operatorname{trace}\{\bar{\Sigma}\}$)')
+
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'theoretical upper bound')
+
+    #plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'b', label=r'empirical ${\cal E}^{(0)}_{F,k}$')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--',
+             label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+
+    if enableSmartPlayers:
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'r',
+                 label=r'empirical ${\cal E}^{(1)}_{F,k}$')
+        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(
+            trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
+
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown',
+                 label=r'empirical ${\cal E}^{(2)}_{F,k}$')
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange',
+                 label=r'empirical ${\cal E}^{(3)}_{F,k}$')
+
+    # plt.legend()
+    plt.ylabel('db')
+    plt.xlabel('n')
+    # if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
+    plt.grid()
+
 
 
 def computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f):
