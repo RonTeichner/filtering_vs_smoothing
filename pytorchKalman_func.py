@@ -1285,8 +1285,6 @@ def adversarialPlayerPlotting(fileName):
     # if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
     plt.grid()
 
-
-
 def computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f):
     tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
     caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
@@ -1499,3 +1497,26 @@ def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adve
             caligraphE_F_3_mean = np.mean(caligraphE_F_3, axis=1)  # watt
 
     return caligraphE_F_minus_1_b, caligraphE_F_minus_1_mean, caligraphE_F_0_b, caligraphE_F_1_b, caligraphE_F_2_b, caligraphE_F_3_b, caligraphE_F_0_mean, caligraphE_F_1_mean, caligraphE_F_2_mean, caligraphE_F_3_mean, bounds
+
+def knowledgeGate(Q_cholesky, R_cholesky, playerType, processNoises, measurementNoises, device):
+    N, batchSize, dim_x, dim_z = processNoises.shape[0], processNoises.shape[1], processNoises.shape[2], measurementNoises.shape[2]
+    if playerType == 'NoAccess':
+        processNoisesKnown2Player = torch.matmul(Q_cholesky, torch.randn(N, batchSize, N, dim_x, 1, dtype=torch.float, device=device))
+        measurementNoisesKnown2Player = torch.matmul(R_cholesky, torch.randn(N, batchSize, N, dim_z, 1, dtype=torch.float, device=device))
+    elif playerType == 'Causal':
+        processNoisesKnown2Player = torch.matmul(Q_cholesky, torch.randn(N, batchSize, N, dim_x, 1, dtype=torch.float, device=device))
+        processNoisesKnown2Player[2, :, 0] = processNoises[0]
+        for k in range(3, N):
+            processNoisesKnown2Player[k, :, :k-2] = processNoisesKnown2Player[k-1, :, :k-2]
+            processNoisesKnown2Player[k, :, k-2] = processNoises[k-2]
+        measurementNoisesKnown2Player = torch.matmul(R_cholesky, torch.randn(N, batchSize, N, dim_z, 1, dtype=torch.float, device=device))
+    elif playerType == 'Genie':
+        processNoisesKnown2Player = processNoises[:, :, None, :, :].repeat(1, 1, N, 1, 1)
+        measurementNoisesKnown2Player = measurementNoises[:, :, None, :, :].repeat(1, 1, N, 1, 1)
+    else:
+        print('Error: knowledgeGate: unknown player type')
+        exit()
+
+    # processNoisesKnown2Player  shape: [N, batchSize, N, dim_x, 1]
+    # measurementNoisesKnown2Player  shape: [N, batchSize, N, dim_z, 1]
+    return processNoisesKnown2Player, measurementNoisesKnown2Player
