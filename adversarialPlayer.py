@@ -17,12 +17,16 @@ fileName = 'sys2D_secondTry'
 if enablePlotOnly:
     savedList = pickle.load(open(fileName + '_final_' + '.pt', "rb"))
     sysModel, bounds_N, currentFileName_N, bounds_N_plus_m, currentFileName_N_plus_m, bounds_N_plus_2m, currentFileName_N_plus_2m, mistakeBound, delta_trS, gapFromInfBound = savedList
-    print('bounds file loaded')
-    print(f'no player bound is {watt2dbm(bounds_N[0])} dbm')
-    print(f'no knowledge bound is {watt2dbm(bounds_N[1])} dbm; {watt2dbm(bounds_N[1]) - watt2dbm(bounds_N[0])} db')
-    print(f'no access bound is {watt2dbm(bounds_N[2])} dbm; {watt2dbm(bounds_N[2]) - watt2dbm(bounds_N[0])} db')
-    print(f'causal bound is {watt2dbm(bounds_N[3])} dbm; {watt2dbm(bounds_N[3]) - watt2dbm(bounds_N[0])} db')
-    print(f'genie bound is {watt2dbm(bounds_N[4])} dbm; {watt2dbm(bounds_N[4]) - watt2dbm(bounds_N[0])} db')
+    savedList = pickle.load(open(currentFileName_N_plus_2m, "rb"))
+    N = savedList[2]
+
+    print(f'bounds file loaded; bounds were calculated for N = {N}')
+    print(f'no player bound is {watt2dbm(bounds_N_plus_2m[0])} dbm')
+    print(f'no knowledge bound is {watt2dbm(bounds_N_plus_2m[1])} dbm; {watt2dbm(bounds_N_plus_2m[1]) - watt2dbm(bounds_N_plus_2m[0])} db')
+    print(f'no access bound is {watt2dbm(bounds_N_plus_2m[2])} dbm; {watt2dbm(bounds_N_plus_2m[2]) - watt2dbm(bounds_N_plus_2m[0])} db')
+    print(f'causal bound is {watt2dbm(bounds_N_plus_2m[3])} dbm; {watt2dbm(bounds_N_plus_2m[3]) - watt2dbm(bounds_N_plus_2m[0])} db')
+    print(f'genie bound is {watt2dbm(bounds_N_plus_2m[4])} dbm; {watt2dbm(bounds_N_plus_2m[4]) - watt2dbm(bounds_N_plus_2m[0])} db')
+
     # plotting:
     adversarialPlayerPlotting(currentFileName_N_plus_2m)
     plt.show()
