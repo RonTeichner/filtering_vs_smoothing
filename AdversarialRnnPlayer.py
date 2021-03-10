@@ -19,12 +19,12 @@ else:
     device = 'cpu'
 
 batchSize = 100
-num_layers, hidden_size = 3, 1000
+num_layers, hidden_size = 2, 100
 dp = False
 
 lowThrLr = 1e-6
 
-playerType = 'Genie'  # {'NoAccess', 'Causal', 'Genie'}
+playerType = 'Causal'  # {'NoAccess', 'Causal', 'Genie'}
 if playerType == 'NoAccess':
     p = 1
 elif playerType == 'Causal':
@@ -114,7 +114,7 @@ class RNN_Adversarial(nn.Module):
 print("Build RNN player model ...")
 player = RNN_Adversarial(input_dim=N*(dim_x + dim_z), hidden_dim=hidden_size, output_dim=N*dim_x, num_layers=num_layers).to(device=device)
 
-optimizer = optim.Adam(player.parameters(), lr=1)
+optimizer = optim.Adam(player.parameters(), lr=0.01)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, threshold=1e-6)
 
 H = torch.tensor(sysModel["H"], dtype=torch.float, requires_grad=False)
