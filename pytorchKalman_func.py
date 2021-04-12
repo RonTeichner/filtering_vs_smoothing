@@ -1258,28 +1258,29 @@ def adversarialPlayerPlotting(fileName):
     #plt.show()
 
     plt.figure()
-    plt.title(r'$\frac{1}{n}\sum_{k=0}^{n-1} ||e^R_{k \mid k-1}||_2^2$ (w.r.t $\operatorname{trace}\{\bar{\Sigma}\}$)')
+    plt.title(r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid k-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{Tr}\{\bar{\Sigma}\}$)')
 
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(
         trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'theoretical upper bound')
 
     #plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'b', label=r'empirical ${\cal E}^{(0)}_{F,k}$')
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(
-        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--',
-             label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--',label=r'$u_k \sim {\mathcal{N}}(0,\sigma^2_u I)$')
+             #label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
     if enableSmartPlayers:
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'r',
-                 label=r'empirical ${\cal E}^{(1)}_{F,k}$')
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'r',label=r'$f_n(1)$')
+                 #label=r'empirical ${\cal E}^{(1)}_{F,k}$')
         plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(
-            trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
+            trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'$B^{(1)}_{100}$')
+                 #label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown',
-                 label=r'empirical ${\cal E}^{(2)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange',
-                 label=r'empirical ${\cal E}^{(3)}_{F,k}$')
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown', label=r'$f_n(2)$')
+                 #label=r'empirical ${\cal E}^{(2)}_{F,k}$')
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange', label=r'$f_n(3)$')
+                 #label=r'empirical ${\cal E}^{(3)}_{F,k}$')
 
-    # plt.legend()
+    plt.legend()
     plt.ylabel('db')
     plt.xlabel('n')
     # if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
