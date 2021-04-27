@@ -1258,7 +1258,7 @@ def adversarialPlayerPlotting(fileName):
     #plt.show()
 
     plt.figure()
-    plt.title(r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid k-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{Tr}\{\bar{\Sigma}\}$)')
+    plt.title(r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid k-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{tr}\{\bar{\Sigma}\}$)')
 
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(
         trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'theoretical upper bound')
@@ -1281,7 +1281,7 @@ def adversarialPlayerPlotting(fileName):
                  #label=r'empirical ${\cal E}^{(3)}_{F,k}$')
 
     plt.legend()
-    plt.ylabel('db')
+    plt.ylabel(r'$f_n(p)$ [db]')
     plt.xlabel('n')
     # if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
     plt.grid()
