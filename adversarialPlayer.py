@@ -11,7 +11,8 @@ import torch.optim as optim
 import pickle
 import time
 
-enablePlotOnly = True
+enablePlotOnly = False
+enableInvestigateAllN = True
 fileName = 'sys2D_secondTry'
 
 if enablePlotOnly:
@@ -31,6 +32,24 @@ if enablePlotOnly:
     adversarialPlayerPlotting(currentFileName_N_plus_2m)
     plt.show()
     exit()
+
+if enableInvestigateAllN:
+    useCuda = False
+    mistakeBound, delta_trS = 1 * 1e-2, 1 * 1e-2
+    enableCausalPlayer = True
+    savedList = pickle.load(open(fileName + '_final_' + '.pt', "rb"))
+    sysModel, _, _, _, _, _, _, _, _, _ = savedList
+    fileName = fileName + '_allN_'
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
+    delta_u, delta_caligraphE = 1e-3, 1e-3
+    adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, True)
+    N_list = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,30,40,50,60,70,80,90,100]
+    bounds_N_list = list()
+    for N in N_list:
+        print(f'all N calculations, N = {N}')
+        bounds_N, _ = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, fileName)
+        bounds_N_list.append(bounds_N_list)
+    pickle.dump([sysModel, bounds_N_list], open(fileName + '.pt', 'wb'))
 
 
 dim_x, dim_z = 2, 2

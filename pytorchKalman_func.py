@@ -1281,7 +1281,7 @@ def adversarialPlayerPlotting(fileName):
                  #label=r'empirical ${\cal E}^{(3)}_{F,k}$')
 
     plt.legend()
-    plt.ylabel(r'$f_n(p)$ [db]')
+    plt.ylabel(r'Mean error, $f_n(p)$ [db]')
     plt.xlabel('n')
     # if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
     plt.grid()
