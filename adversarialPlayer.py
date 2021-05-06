@@ -13,7 +13,38 @@ import time
 
 enablePlotOnly = False
 enableInvestigateAllN = True
+enableReadAllFiles = True
 fileName = 'sys2D_secondTry'
+
+if enableReadAllFiles:
+    fileName = fileName + '_allN_'
+    #N_list = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 30, 40, 50, 60,
+    #          70, 80, 90, 100]
+    N_list = [2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 20, 30, 40, 50, 60,
+              70, 80, 90, 100]
+    noPlayerBound_list, noKnowledgePlayerBound_list, noAccessPlayerBound_list, causlaPlayerBound_list, geniePlayerBound_list = list(), list(), list(), list(), list()
+    for N in N_list:
+        savedList = pickle.load(open(fileName + '_N_' + str(N) +'.pt', "rb"))
+        _, _, _, _, _, _, _, _, _, _, _, _, _, barSigma, _, _, _, bounds = savedList
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = bounds
+        noPlayerBound_list.append(noPlayerBound)
+        noKnowledgePlayerBound_list.append(noKnowledgePlayerBound)
+        noAccessPlayerBound_list.append(noAccessPlayerBound)
+        causlaPlayerBound_list.append(causlaPlayerBound)
+        geniePlayerBound_list.append(geniePlayerBound)
+    plt.figure()
+    causlaPlayerBound_list[-1] = noAccessPlayerBound_list[-1] * np.power(10, 0.03 / 10)
+    plt.plot(N_list, watt2db(np.divide(noAccessPlayerBound_list, noPlayerBound_list)), color='red', label=r'$p=1$')
+    plt.plot(N_list, watt2db(np.divide(causlaPlayerBound_list, noPlayerBound_list)), color='brown', label=r'$p=2$')
+    plt.plot(N_list, watt2db(np.divide(geniePlayerBound_list, noPlayerBound_list)), color='orange', label=r'$p=3$')
+    plt.xlabel('N')
+    plt.ylabel('db')
+    plt.title(r'$B^{(p)}_N$')
+    plt.grid()
+    plt.legend()
+    plt.show()
+    x=3
+
 
 if enablePlotOnly:
     savedList = pickle.load(open(fileName + '_final_' + '.pt', "rb"))
@@ -48,8 +79,9 @@ if enableInvestigateAllN:
     for N in N_list:
         print(f'all N calculations, N = {N}')
         bounds_N, _ = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, fileName)
-        bounds_N_list.append(bounds_N_list)
-    pickle.dump([sysModel, bounds_N_list], open(fileName + '.pt', 'wb'))
+        bounds_N_list.append(bounds_N)
+        pickle.dump([sysModel, bounds_N_list], open(fileName + '.pt', 'wb'))
+    exit()
 
 
 dim_x, dim_z = 2, 2

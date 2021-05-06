@@ -470,7 +470,7 @@ class playersToolbox:
         if self.use_cuda:
             self.K_HT.cuda()
             self.summed.cuda()
-            self.thr_db.cuda()
+            #self.thr_db.cuda()
             self.thr.cuda()
 
         if enableSmartPlayers:

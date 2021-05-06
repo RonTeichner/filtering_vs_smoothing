@@ -11,6 +11,9 @@ import torch.optim as optim
 import pickle
 import time
 
+enableTrain = False
+enableTest = True
+
 fileName = 'sys2D_secondTry'
 useCuda = True
 if useCuda:
@@ -24,7 +27,7 @@ dp = False
 
 lowThrLr = 1e-6
 
-playerType = 'Causal'  # {'NoAccess', 'Causal', 'Genie'}
+playerType = 'NoAccess'  # {'NoAccess', 'Causal', 'Genie'}
 if playerType == 'NoAccess':
     p = 1
 elif playerType == 'Causal':
@@ -133,64 +136,188 @@ filter_P_init = pytorchEstimator.theoreticalBarSigma.cpu().numpy()  # filter @ t
 hidden = torch.zeros(num_layers, batchSize, hidden_size, dtype=torch.float, device=device)
 bestPerformanceVsNoPlayer = -np.inf
 playerFileName = fileName + '_' + playerType + '.pt'
-while True:
-    epoch += 1
-    optimizer.zero_grad()
-    pytorchEstimator.zero_grad()
+if enableTrain:
+    while True:
+        epoch += 1
+        optimizer.zero_grad()
+        pytorchEstimator.zero_grad()
 
+        # create pure measurements:
+        tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel, startAtZero=False, dp=dp)  # z: [N, batchSize, dim_z]
+        tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float, device=device), torch.tensor(tilde_x, dtype=torch.float, device=device), torch.tensor(processNoises, dtype=torch.float, device=device), torch.tensor(measurementNoises, dtype=torch.float, device=device)
+
+        # knowledge gate:
+        processNoisesKnown2Player, measurementNoisesKnown2Player = knowledgeGate(Q_cholesky, R_cholesky, playerType, processNoises, measurementNoises, device)
+        # processNoisesKnown2Player  shape: [N, batchSize, N, dim_x, 1]
+        # measurementNoisesKnown2Player  shape: [N, batchSize, N, dim_z, 1]
+
+        # Adversarial player:
+        u_N, _ = player(processNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1), measurementNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1))
+
+        #  u_N.pow(2).sum(dim=2).sum(dim=0)  # this shows the energy used by the player at every batch
+
+        # estimator init values:
+        filterStateInit = np.matmul(np.linalg.cholesky(filter_P_init), np.random.randn(batchSize, dim_x, 1))
+        if dp: print(f'filter init mean error energy w.r.t trace(bar(sigma)): {watt2dbm(np.mean(np.power(np.linalg.norm(filterStateInit, axis=1), 2), axis=0)) - watt2dbm(np.trace(filter_P_init))} db')
+        filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False, device=device).contiguous()
+        # filterStateInit = tilde_x[0]  This can be used if the initial state is known
+
+        # kalman filter on z:
+        z = tilde_z + torch.matmul(H_transpose, u_N)
+        tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+        tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
+        filteringErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(tilde_e_k_given_k_minus_1)
+
+        loss = - filteringErrorMeanEnergyPerBatch.mean()  # mean error energy of a single batch [W]
+
+        scheduler.step(loss)
+        loss.backward()
+        optimizer.step()  # parameter update
+
+        # kalman filter on tilde_z for printing relative player contribution:
+        pure_tilde_x_est_f, _ = pytorchEstimator(tilde_z, filterStateInit)
+        pure_tilde_e_k_given_k_minus_1 = tilde_x - pure_tilde_x_est_f
+        pure_filteringErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(pure_tilde_e_k_given_k_minus_1)
+        pureLoss = - pure_filteringErrorMeanEnergyPerBatch.mean()
+
+        performance_vs_noPlayer = watt2dbm(-loss.item()) - watt2dbm(-pureLoss.item())  # db
+
+        if performance_vs_noPlayer > bestPerformanceVsNoPlayer + saveThr:
+            bestPerformanceVsNoPlayer = performance_vs_noPlayer
+            bestgap = theoreticalPlayerImprovement[p-1] - bestPerformanceVsNoPlayer
+            torch.save(player.state_dict(), playerFileName)
+            print('player saved')
+
+
+        print(f'epoch {epoch}: MSE w.r.t pure input is {performance_vs_noPlayer} db; gap from theoretical: {theoreticalPlayerImprovement[p-1] - performance_vs_noPlayer}; lr: {scheduler._last_lr[-1]}')
+
+        if scheduler._last_lr[-1] < lowThrLr:
+            print(f'Stoping optimization due to learning rate of {scheduler._last_lr[-1]}')
+            print(playerType + f': Best gap performance vs theoretical is: {bestgap}')
+            break
+
+if enableTest:
+    batchSize = 6500
+    device = 'cpu'
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=False, useCuda=False)
+    Q_cholesky, R_cholesky = torch.tensor(np.linalg.cholesky(sysModel['Q']), dtype=torch.float, device=device), torch.tensor(np.linalg.cholesky(sysModel['R']), dtype=torch.float, device=device)
+    H_transpose = torch.transpose(H, 1, 0)
+    H_transpose = H_transpose.contiguous()
     # create pure measurements:
     tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel, startAtZero=False, dp=dp)  # z: [N, batchSize, dim_z]
     tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float, device=device), torch.tensor(tilde_x, dtype=torch.float, device=device), torch.tensor(processNoises, dtype=torch.float, device=device), torch.tensor(measurementNoises, dtype=torch.float, device=device)
 
-    # knowledge gate:
-    processNoisesKnown2Player, measurementNoisesKnown2Player = knowledgeGate(Q_cholesky, R_cholesky, playerType, processNoises, measurementNoises, device)
-    # processNoisesKnown2Player  shape: [N, batchSize, N, dim_x, 1]
-    # measurementNoisesKnown2Player  shape: [N, batchSize, N, dim_z, 1]
+    playerTypes = ['None', 'NoAccess', 'Causal', 'Genie']
+    for playerType in playerTypes:
+        if playerType == 'None':
+            # estimator init values:
+            filterStateInit = np.matmul(np.linalg.cholesky(filter_P_init), np.random.randn(batchSize, dim_x, 1))
+            if dp: print(f'filter init mean error energy w.r.t trace(bar(sigma)): {watt2dbm(np.mean(np.power(np.linalg.norm(filterStateInit, axis=1), 2), axis=0)) - watt2dbm(np.trace(filter_P_init))} db')
+            filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False, device=device).contiguous()
+            # filterStateInit = tilde_x[0]  This can be used if the initial state is known
 
-    # Adversarial player:
-    u_N, _ = player(processNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1), measurementNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1))
+            # kalman filter on z:
+            z = tilde_z
+            tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+            tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
+            e_R_0_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
+            continue
 
-    #  u_N.pow(2).sum(dim=2).sum(dim=0)  # this shows the energy used by the player at every batch
-
-    # estimator init values:
-    filterStateInit = np.matmul(np.linalg.cholesky(filter_P_init), np.random.randn(batchSize, dim_x, 1))
-    if dp: print(f'filter init mean error energy w.r.t trace(bar(sigma)): {watt2dbm(np.mean(np.power(np.linalg.norm(filterStateInit, axis=1), 2), axis=0)) - watt2dbm(np.trace(filter_P_init))} db')
-    filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False, device=device).contiguous()
-    # filterStateInit = tilde_x[0]  This can be used if the initial state is known
-
-    # kalman filter on z:
-    z = tilde_z + torch.matmul(H_transpose, u_N)
-    tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
-    tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
-    filteringErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(tilde_e_k_given_k_minus_1)
-
-    loss = - filteringErrorMeanEnergyPerBatch.mean()  # mean error energy of a single batch [W]
-
-    scheduler.step(loss)
-    loss.backward()
-    optimizer.step()  # parameter update
-
-    # kalman filter on tilde_z for printing relative player contribution:
-    pure_tilde_x_est_f, _ = pytorchEstimator(tilde_z, filterStateInit)
-    pure_tilde_e_k_given_k_minus_1 = tilde_x - pure_tilde_x_est_f
-    pure_filteringErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(pure_tilde_e_k_given_k_minus_1)
-    pureLoss = - pure_filteringErrorMeanEnergyPerBatch.mean()
-
-    performance_vs_noPlayer = watt2dbm(-loss.item()) - watt2dbm(-pureLoss.item())  # db
-
-    if performance_vs_noPlayer > bestPerformanceVsNoPlayer + saveThr:
-        bestPerformanceVsNoPlayer = performance_vs_noPlayer
-        bestgap = theoreticalPlayerImprovement[p-1] - bestPerformanceVsNoPlayer
-        torch.save(player.state_dict(), playerFileName)
-        print('player saved')
+        playerFileName = fileName + '_' + playerType + '.pt'
+        player.load_state_dict(torch.load(playerFileName))
+        player.eval()
+        player.to(device)
 
 
-    print(f'epoch {epoch}: MSE w.r.t pure input is {performance_vs_noPlayer} db; gap from theoretical: {theoreticalPlayerImprovement[p-1] - performance_vs_noPlayer}; lr: {scheduler._last_lr[-1]}')
 
-    if scheduler._last_lr[-1] < lowThrLr:
-        print(f'Stoping optimization due to learning rate of {scheduler._last_lr[-1]}')
-        print(playerType + f': Best gap performance vs theoretical is: {bestgap}')
-        break
+
+        # knowledge gate:
+        processNoisesKnown2Player, measurementNoisesKnown2Player = knowledgeGate(Q_cholesky, R_cholesky, playerType, processNoises, measurementNoises, device)
+        # processNoisesKnown2Player  shape: [N, batchSize, N, dim_x, 1]
+        # measurementNoisesKnown2Player  shape: [N, batchSize, N, dim_z, 1]
+
+        # Adversarial player:
+        u_N, _ = player(processNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1), measurementNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1))
+
+        #  u_N.pow(2).sum(dim=2).sum(dim=0)  # this shows the energy used by the player at every batch
+
+        # estimator init values:
+        filterStateInit = np.matmul(np.linalg.cholesky(filter_P_init), np.random.randn(batchSize, dim_x, 1))
+        if dp: print(f'filter init mean error energy w.r.t trace(bar(sigma)): {watt2dbm(np.mean(np.power(np.linalg.norm(filterStateInit, axis=1), 2), axis=0)) - watt2dbm(np.trace(filter_P_init))} db')
+        filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False, device=device).contiguous()
+        # filterStateInit = tilde_x[0]  This can be used if the initial state is known
+
+        # kalman filter on z:
+        z = tilde_z + torch.matmul(H_transpose, u_N)
+        tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+        tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
+
+        if playerType == "NoAccess":
+            e_R_1_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
+        elif playerType == "Causal":
+            e_R_2_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
+        elif playerType == "Genie":
+            e_R_3_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
+
+
+    plt.figure()
+    caligraphE_tVec = np.arange(0, N, 1)
+    theoreticalBarSigma = pytorchEstimator.theoreticalBarSigma
+    trace_bar_Sigma = np.trace(theoreticalBarSigma.cpu().numpy())
+    delta_u, delta_caligraphE = 1e-3, 1e-3
+
+    adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, True)
+    theoretical_lambda_Xi_N_max = adversarialPlayersToolbox.theoretical_lambda_Xi_N_max
+    lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max = adversarialPlayersToolbox.lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max
+    theoretical_caligraphE_F_1 = trace_bar_Sigma + theoretical_lambda_Xi_N_max.cpu().numpy()
+    theoretical_upper_bound = trace_bar_Sigma + theoretical_lambda_Xi_N_max.cpu().numpy() + 2 * np.sqrt(lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max.cpu().numpy() * trace_bar_Sigma)
+    sigma_u_square = torch.tensor(1 / dim_x, dtype=torch.float)
+    normalizedNoKnowledgePlayerContribution = pytorchEstimator.normalizedNoKnowledgePlayerContribution
+    theoretical_caligraphE_F_0 = trace_bar_Sigma + sigma_u_square.cpu().numpy() * normalizedNoKnowledgePlayerContribution.cpu().numpy()
+
+    plt.title(
+        r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid k-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{tr}\{\bar{\Sigma}\}$)')
+
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'theoretical upper bound')
+
+    # plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'b', label=r'empirical ${\cal E}^{(0)}_{F,k}$')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--', label=r'$u_k \sim {\mathcal{N}}(0,\sigma^2_u I)$')
+    # label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+
+    caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
+    caligraphE_F_1_mean = np.mean(caligraphE_F_1, axis=1)  # watt
+
+    caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
+    caligraphE_F_2_mean = np.mean(caligraphE_F_2, axis=1)  # watt
+
+    caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
+    caligraphE_F_3_mean = np.mean(caligraphE_F_3, axis=1)  # watt
+
+    caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
+    caligraphE_F_minus_1_mean = np.mean(caligraphE_F_minus_1, axis=1)  # watt
+
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'r',
+             label=r'$f_n(1)$')
+    # label=r'empirical ${\cal E}^{(1)}_{F,k}$')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'$B^{(1)}_{100}$')
+    # label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
+
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown',
+             label=r'$f_n(2)$')
+    # label=r'empirical ${\cal E}^{(2)}_{F,k}$')
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange',
+             label=r'$f_n(3)$')
+    # label=r'empirical ${\cal E}^{(3)}_{F,k}$')
+
+    plt.legend()
+    plt.ylabel(r'Mean error, $f_n(p)$ [db]')
+    plt.xlabel('n')
+    # if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
+    plt.grid()
+    plt.show()
 
 
 
