@@ -14,7 +14,7 @@ import time
 enableTrain = False
 enableTest = True
 
-fileName = 'sys2D_secondTry'
+fileName = 'sys2D_secondTry' #  'sys2D_secondTry'
 useCuda = True
 if useCuda:
     device = 'cuda'
@@ -207,7 +207,7 @@ if enableTest:
     tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel, startAtZero=False, dp=dp)  # z: [N, batchSize, dim_z]
     tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float, device=device), torch.tensor(tilde_x, dtype=torch.float, device=device), torch.tensor(processNoises, dtype=torch.float, device=device), torch.tensor(measurementNoises, dtype=torch.float, device=device)
 
-    playerTypes = ['None', 'NoAccess', 'Causal', 'Genie']
+    playerTypes = ['None', 'NoKnowledge', 'NoAccess', 'Causal', 'Genie']
     for playerType in playerTypes:
         if playerType == 'None':
             # estimator init values:
@@ -221,6 +221,25 @@ if enableTest:
             tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
             tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
             e_R_0_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
+            x_minus1_est_f = tilde_x_est_f
+            continue
+
+        if playerType == 'NoKnowledge':
+            u_0 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
+            u_0 = noKnowledgePlayer(u_0)
+
+            # estimator init values:
+            filterStateInit = np.matmul(np.linalg.cholesky(filter_P_init), np.random.randn(batchSize, dim_x, 1))
+            if dp: print(f'filter init mean error energy w.r.t trace(bar(sigma)): {watt2dbm(np.mean(np.power(np.linalg.norm(filterStateInit, axis=1), 2), axis=0)) - watt2dbm(np.trace(filter_P_init))} db')
+            filterStateInit = torch.tensor(filterStateInit, dtype=torch.float, requires_grad=False, device=device).contiguous()
+            # filterStateInit = tilde_x[0]  This can be used if the initial state is known
+
+            # Kalman filters:
+            z = tilde_z + torch.matmul(H_transpose, u_0)
+            tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+            tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
+            #e_R_0_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
+            x_0_est_f = tilde_x_est_f
             continue
 
         playerFileName = fileName + '_' + playerType + '.pt'
@@ -254,13 +273,16 @@ if enableTest:
 
         if playerType == "NoAccess":
             e_R_1_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
+            x_1_est_f = tilde_x_est_f
         elif playerType == "Causal":
             e_R_2_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
+            x_2_est_f = tilde_x_est_f
         elif playerType == "Genie":
             e_R_3_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
+            x_3_est_f = tilde_x_est_f
 
 
-    plt.figure()
+    plt.figure(figsize=(6,6.2))
     caligraphE_tVec = np.arange(0, N, 1)
     theoreticalBarSigma = pytorchEstimator.theoreticalBarSigma
     trace_bar_Sigma = np.trace(theoreticalBarSigma.cpu().numpy())
@@ -312,12 +334,23 @@ if enableTest:
              label=r'$f_n(3)$')
     # label=r'empirical ${\cal E}^{(3)}_{F,k}$')
 
-    plt.legend()
+
+    plt.legend(loc='lower right')
     plt.ylabel(r'Mean error, $f_n(p)$ [db]')
     plt.xlabel('n')
     # if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
     plt.grid()
     plt.show()
+
+    noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = computeBounds(tilde_x, x_minus1_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
+    bounds = (noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound)
+
+    print(f'bounds file loaded for RNN; bounds were calculated for N = {N}')
+    print(f'no player bound is {watt2dbm(bounds[0])} dbm')
+    print(f'no knowledge bound is {watt2dbm(bounds[1])} dbm; {watt2dbm(bounds[1]) - watt2dbm(bounds[0])} db')
+    print(f'no access bound is {watt2dbm(bounds[2])} dbm; {watt2dbm(bounds[2]) - watt2dbm(bounds[0])} db')
+    print(f'causal bound is {watt2dbm(bounds[3])} dbm; {watt2dbm(bounds[3]) - watt2dbm(bounds[0])} db')
+    print(f'genie bound is {watt2dbm(bounds[4])} dbm; {watt2dbm(bounds[4]) - watt2dbm(bounds[0])} db')
 
 
 

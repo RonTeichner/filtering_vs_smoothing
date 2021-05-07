@@ -1257,7 +1257,7 @@ def adversarialPlayerPlotting(fileName):
     #plt.suptitle('This is a somewhat long figure title', fontsize=16)
     #plt.show()
 
-    plt.figure()
+    plt.figure(figsize=(6,6.2))
     plt.title(r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid k-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{tr}\{\bar{\Sigma}\}$)')
 
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(

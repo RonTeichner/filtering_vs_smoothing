@@ -11,9 +11,9 @@ import torch.optim as optim
 import pickle
 import time
 
-enablePlotOnly = False
-enableInvestigateAllN = True
-enableReadAllFiles = True
+enablePlotOnly = True
+enableInvestigateAllN = False
+enableReadAllFiles = False
 fileName = 'sys2D_secondTry'
 
 if enableReadAllFiles:
