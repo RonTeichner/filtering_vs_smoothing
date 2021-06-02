@@ -558,6 +558,15 @@ class playersToolbox:
 
         return self.Xi_N_l
 
+    def compute_Kappa_N(self, N):
+        self.Kappa_N = torch.zeros(N * self.dim_x, N * self.dim_x, dtype=torch.float)
+        if self.use_cuda: self.Kappa_N.cuda()
+        for c in range(N):
+            for r in range(c):
+                self.Kappa_N[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(torch.transpose(self.K_HT, 1, 0), torch.transpose(torch.matrix_power(self.tildeF, c-1-r), 1, 0))
+
+        return self.Kappa_N
+
     def compute_bar_Xi_N(self, N):
         if not(N == self.compute_bar_Xi_N_previous_N):
             self.compute_bar_Xi_N_previous_N = N
@@ -1290,24 +1299,31 @@ def computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_e
     tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
     caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
     noPlayerBound = caligraphE_F_minus_1[-1].mean()
+    noPlayerBoundStd = caligraphE_F_minus_1[-1].std()
 
     e_R_0_k_given_k_minus_1 = tilde_x - x_0_est_f
     caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
     noKnowledgePlayerBound = caligraphE_F_0[-1].mean()
+    noKnowledgePlayerBoundStd = caligraphE_F_0[-1].std()
 
     e_R_1_k_given_k_minus_1 = tilde_x - x_1_est_f
     caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
     noAccessPlayerBound = caligraphE_F_1[-1].mean()
+    noAccessPlayerBoundStd = caligraphE_F_1[-1].std()
 
     e_R_2_k_given_k_minus_1 = tilde_x - x_2_est_f
     caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
     causlaPlayerBound = caligraphE_F_2[-1].mean()
+    causlaPlayerBoundStd = caligraphE_F_2[-1].std()
 
     e_R_3_k_given_k_minus_1 = tilde_x - x_3_est_f
     caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
     geniePlayerBound = caligraphE_F_3[-1].mean()
+    geniePlayerBoundStd = caligraphE_F_3[-1].std()
 
-    return noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound
+    stdList = [noPlayerBoundStd, noKnowledgePlayerBoundStd, noAccessPlayerBoundStd, causlaPlayerBoundStd, geniePlayerBoundStd]
+
+    return noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, stdList
 
 def runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, enableSmartPlayers, N, mistakeBound, delta_trS, enableCausalPlayer, fileName):
     batchSize = 1  # to be updated later
@@ -1447,7 +1463,7 @@ def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adve
         x_3_est_f, x_3_est_s = pytorchEstimator(z_3, filterStateInit)
 
         # bounds:
-        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, _ = computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
         bounds = (noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound)
 
         if dp: print(f'mean energy of tilde_x: ', {watt2dbm(calcTimeSeriesMeanEnergy(tilde_x).mean())}, ' [dbm]')

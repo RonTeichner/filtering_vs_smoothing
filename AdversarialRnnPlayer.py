@@ -342,15 +342,16 @@ if enableTest:
     plt.grid()
     plt.show()
 
-    noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = computeBounds(tilde_x, x_minus1_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
+    noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, stdList = computeBounds(tilde_x, x_minus1_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
     bounds = (noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound)
+    noPlayerBoundStd, noKnowledgePlayerBoundStd, noAccessPlayerBoundStd, causlaPlayerBoundStd, geniePlayerBoundStd = stdList
 
     print(f'bounds file loaded for RNN; bounds were calculated for N = {N}')
     print(f'no player bound is {watt2dbm(bounds[0])} dbm')
-    print(f'no knowledge bound is {watt2dbm(bounds[1])} dbm; {watt2dbm(bounds[1]) - watt2dbm(bounds[0])} db')
-    print(f'no access bound is {watt2dbm(bounds[2])} dbm; {watt2dbm(bounds[2]) - watt2dbm(bounds[0])} db')
-    print(f'causal bound is {watt2dbm(bounds[3])} dbm; {watt2dbm(bounds[3]) - watt2dbm(bounds[0])} db')
-    print(f'genie bound is {watt2dbm(bounds[4])} dbm; {watt2dbm(bounds[4]) - watt2dbm(bounds[0])} db')
+    print(f'no knowledge bound is {watt2dbm(bounds[1])} dbm; std {watt2dbm(stdList[1])} dbm; {watt2dbm(bounds[1]) - watt2dbm(bounds[0])} db mean increase in error; {watt2dbm(bounds[1]+(stdList[1]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[1]-(stdList[1]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
+    print(f'no access bound is {watt2dbm(bounds[2])} dbm; std {watt2dbm(stdList[2])} dbm; {watt2dbm(bounds[2]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[2]+(stdList[2]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[2]-(stdList[2]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
+    print(f'causal bound is {watt2dbm(bounds[3])} dbm; std {watt2dbm(stdList[3])} dbm; {watt2dbm(bounds[3]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[3]+(stdList[3]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[3]-(stdList[3]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
+    print(f'genie bound is {watt2dbm(bounds[4])} dbm; std {watt2dbm(stdList[4])} dbm; {watt2dbm(bounds[4]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[4]+(stdList[4]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[4]-(stdList[4]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
 
 
 
