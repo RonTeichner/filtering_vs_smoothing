@@ -495,7 +495,8 @@ class playersToolbox:
         s3 = sumOf_3_dim_x_SquareVar
         trS = torch.trace(self.theoreticalBarSigma)
         lXi = self.compute_lambda_Xi_max()
-        self.newVarianceBound = s3 - torch.pow(trS, 2) + 4*lXi*trS + 4*torch.sqrt(lXi)*torch.sqrt(trS*(s3 - torch.pow(trS, 2)))
+        #self.newVarianceBound = s3 - torch.pow(trS, 2) + 4*lXi*trS + 4*torch.sqrt(lXi)*torch.sqrt(trS*(s3 - torch.pow(trS, 2)))
+        self.newVarianceBound = 2*torch.pow(trS, 2) + 4*lXi*trS + 4*torch.sqrt(lXi)*torch.sqrt(2*torch.pow(trS, 3))
         return self.newVarianceBound
 
     def test_tilde_e_expression(self, systemInitState, filterStateInit, processNoises, measurementNoises, tilde_e_k_given_k_minus_1):
