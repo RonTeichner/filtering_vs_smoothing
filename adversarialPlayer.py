@@ -12,7 +12,7 @@ import pickle
 import time
 
 enablePlotOnly = False#True
-enableInvestigateAllN = True#False
+enableInvestigateAllN = False#False
 enableReadAllFiles = False
 fileName = 'sys2D_secondTry'
 

@@ -477,6 +477,7 @@ class playersToolbox:
             self.compute_lambda_Xi_max(enableFigure=False)
             self.compute_lambda_bar_Xi_N_bar_Xi_N_transpose_max(enableFigure=False)
             self.compute_bound_on_players_variance()
+            self.compute_new_bound_on_players_variance()
 
     def compute_bound_on_players_variance(self):
         sumOf_3_dim_x_SquareVar = 3 * self.dim_x * torch.pow(torch.diag(self.theoreticalBarSigma), 2).sum()
@@ -488,6 +489,14 @@ class playersToolbox:
         part2 = 2*torch.sqrt(lXiBar*trS)*(torch.sqrt(s3) + trS + 2*lXi)
         self.varianceBound = part1 + part2
         return self.varianceBound
+
+    def compute_new_bound_on_players_variance(self):
+        sumOf_3_dim_x_SquareVar = 3 * self.dim_x * torch.pow(torch.diag(self.theoreticalBarSigma), 2).sum()
+        s3 = sumOf_3_dim_x_SquareVar
+        trS = torch.trace(self.theoreticalBarSigma)
+        lXi = self.compute_lambda_Xi_max()
+        self.newVarianceBound = s3 - torch.pow(trS, 2) + 4*lXi*trS + 4*torch.sqrt(lXi)*torch.sqrt(trS*(s3 - torch.pow(trS, 2)))
+        return self.newVarianceBound
 
     def test_tilde_e_expression(self, systemInitState, filterStateInit, processNoises, measurementNoises, tilde_e_k_given_k_minus_1):
         N, batchSize = processNoises.shape[0], processNoises.shape[1]
@@ -1334,8 +1343,11 @@ def runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  u
     #mistakeBound, delta_trS = 1e-1, 5*1e-2
     trS = np.trace(adversarialPlayersToolbox.theoreticalBarSigma.cpu().numpy())
     batchSizeForPerformance = np.ceil((np.round((np.sqrt(1 / mistakeBound) * adversarialPlayersToolbox.varianceBound.cpu().numpy()) / (delta_trS * trS))) / minBatchSize) * minBatchSize
+    newBatchSizeForPerformance = np.ceil((np.round((np.sqrt(1 / mistakeBound) * adversarialPlayersToolbox.newVarianceBound.cpu().numpy()) / (delta_trS * trS))) / minBatchSize) * minBatchSize
     batchSize = int(np.max((batchSize, batchSizeForPerformance)))
+    #newBatchSize = int(np.max((batchSize, newBatchSizeForPerformance)))
     print(f'batchSize for performance is {batchSizeForPerformance}')
+    print(f'newBatchSize for performance is {newBatchSizeForPerformance}')
     # P(|bound - estBound| > gamma * Sigma_N) < gamma^{-2} for some gamma > 0
     # I want my error on estimating the bound to be w.r.t tr{Sigma}:
     # I want the probability of mistaking in more than 1% of tr{Sigma} to be less than 1%
