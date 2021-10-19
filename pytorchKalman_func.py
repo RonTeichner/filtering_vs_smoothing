@@ -1138,7 +1138,7 @@ def adversarialPlayerPlotting(fileName):
     plt.title('Absolute performance of players, specific game')
 
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)), 'k--',
-             label=r'theoretical upper bound')
+             label=r'naive upper bound')
 
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_minus_1_b), 'g', label=r'empirical ${\cal E}^{(-1)}_{F,k}$')
     plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'g--',
@@ -1280,7 +1280,7 @@ def adversarialPlayerPlotting(fileName):
     plt.title(r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid k-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{tr}\{\bar{\Sigma}\}$)')
 
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(
-        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'theoretical upper bound')
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'naive upper bound')
 
     #plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'b', label=r'empirical ${\cal E}^{(0)}_{F,k}$')
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(

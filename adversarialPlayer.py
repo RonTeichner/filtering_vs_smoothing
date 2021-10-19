@@ -14,7 +14,7 @@ import time
 enablePlotOnly = False#True
 enableInvestigateAllN = False#False
 enableReadAllFiles = False
-fileName = 'sys2D_secondTry'
+fileName = 'sys2D_thirdTry'
 
 if enableReadAllFiles:
     fileName = fileName + '_allN_'
@@ -84,8 +84,8 @@ if enableInvestigateAllN:
     exit()
 
 
-dim_x, dim_z = 2, 2
-seed = 13
+dim_x, dim_z = 3, 3
+#seed = 13
 
 useCuda = False
 
@@ -102,7 +102,7 @@ mistakeBound, delta_trS = 1*1e-2, 1*1e-2
 # therefore gamma = sqrt(1/mistakeBound)
 # and M = (gamma * boundVar) / (delta_trS * tr{Sigma}) = (sqrt(1/mistakeBound) * boundVar) / (delta_trS * tr{Sigma})
 
-np.random.seed(seed)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
+#np.random.seed(seed)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
 # create a single system model:
 sysModel = GenSysModel(dim_x, dim_z)
@@ -154,14 +154,14 @@ while True:
     gapMax = np.max(np.abs(np.subtract(boundsAtInf, bounds_N)))
 
     print(f'max gap from inf is {watt2dbm(gapMax) - watt2dbm(trS)} db w.r.t tr(Sigma)')
-    if gapMax > gap_wrt_trSigma:
+    if False:#gapMax > gap_wrt_trSigma:
         N = N + m
         usePreviousRoundResults = True
     else:
         if not enableCausalPlayer:
-            enableCausalPlayer = True
+            #enableCausalPlayer = True
             usePreviousRoundResults = False
-            continue
+            #continue
 
         pickle.dump([sysModel, bounds_N, currentFileName_N, bounds_N_plus_m, currentFileName_N_plus_m, bounds_N_plus_2m, currentFileName_N_plus_2m, mistakeBound, delta_trS, gapFromInfBound],
                     open(fileName + '_final_' + '.pt', 'wb'))
