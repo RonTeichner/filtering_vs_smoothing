@@ -27,7 +27,7 @@ dp = False
 
 lowThrLr = 1e-6
 
-playerType = 'NoAccess'  # {'NoAccess', 'Causal', 'Genie'}
+playerType = 'Genie'  # {'NoAccess', 'Causal', 'Genie'}
 if playerType == 'NoAccess':
     p = 1
 elif playerType == 'Causal':

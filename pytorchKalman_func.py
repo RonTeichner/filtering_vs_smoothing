@@ -453,6 +453,9 @@ class playersToolbox:
 
         self.K_HT = torch.matmul(self.K, torch.transpose(self.H, 1, 0))
 
+        self.inv_F_Sigma = torch.linalg.inv(torch.matmul(pytorchEstimator.F, self.theoreticalBarSigma))
+        self.D_int = torch.matmul(self.inv_F_Sigma, self.K_HT)
+
         self.summed = torch.zeros(self.dim_x, self.dim_x, dtype=torch.float)
 
         self.compute_Xi_l_N_previous_l, self.compute_Xi_l_N_previous_N = 0, 0
@@ -466,6 +469,12 @@ class playersToolbox:
         self.compute_L_j_N_previous_j, self.compute_L_j_N_previous_N = 0, 0
         self.compute_L_N0_j_N_previous_N_0, self.compute_L_N0_j_N_previous_j, self.compute_L_N0_j_N_previous_N = 0, 0, 0
         self.compute_tildeY_j_N_previous_j, self.compute_tildeY_j_N_previous_N = 0, 0
+
+        self.compute_bar_Xi_s_N_previous_N = 0
+        self.compute_tildeG_previous_N = 0
+        self.compute_tildeB_previous_N = 0
+        self.compute_tildeC_previous_N = 0
+        self.compute_Xi_s_N_previous_N = 0
 
         if self.use_cuda:
             self.K_HT.cuda()
@@ -588,6 +597,96 @@ class playersToolbox:
                     self.bar_Xi_N[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(torch.matrix_power(self.tildeF, r - 1 - c), self.K_HT)
 
         return self.bar_Xi_N
+
+    def compute_Xi_s_N(self, N):
+        if not(N == self.compute_Xi_s_N_previous_N):
+            self.compute_Xi_s_N_previous_N = N
+            self.Xi_s_N = torch.matmul(torch.transpose(self.compute_bar_Xi_s_N(N), 1, 0), self.compute_bar_Xi_s_N(N))
+        return self.Xi_s_N
+
+
+    def compute_bar_Xi_s_N(self, N):
+        if not(N == self.compute_bar_Xi_s_N_previous_N):
+            self.compute_bar_Xi_s_N_previous_N = N
+            self.bar_Xi_s_N = torch.zeros(N * self.dim_x, N * self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.bar_Xi_s_N.cuda()
+
+            self.compute_tildeG(N)
+
+            for r in range(N):
+                for c in range(N):
+                    tildeG_r_c = self.tildeG[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)]
+                    self.bar_Xi_s_N[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(tildeG_r_c, self.K_HT)
+
+        return self.bar_Xi_s_N
+
+    def compute_tildeG(self, N):
+        if not (N == self.compute_tildeG_previous_N):
+            self.compute_tildeG_previous_N = N
+            self.tildeG = torch.zeros(N * self.dim_x, N * self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.tildeG.cuda()
+
+            self.compute_tildeB(N)
+            self.compute_tildeC(N)
+
+            for r in range(N):
+                for c in range(N):
+                    if c < r:
+                        tildeB_r_c = self.tildeB[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)]
+                        self.tildeG[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = tildeB_r_c
+                    else:
+                        tildeC_r_c = self.tildeC[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)]
+                        self.tildeG[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = tildeC_r_c
+
+        return self.tildeG
+
+    def compute_tildeB(self, N):
+        if not (N == self.compute_tildeB_previous_N):
+            self.compute_tildeB_previous_N = N
+            self.tildeB = torch.zeros(N * self.dim_x, N * self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.tildeB.cuda()
+
+            for r in range(N):
+                for c in range(r):
+                    self.tildeB[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matrix_power(self.tildeF, r - c - 1) - torch.matmul(self.theoreticalBarSigma, self.compute_tildeD_r_c_m(N, r, c, r))
+
+        return self.tildeB
+
+    def compute_tildeC(self, N):
+        if not (N == self.compute_tildeC_previous_N):
+            self.compute_tildeC_previous_N = N
+            self.tildec = torch.zeros(N * self.dim_x, N * self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.tildec.cuda()
+
+            for r in range(N):
+                for c in range(r, N):
+                    tildeF_pow_c_minus_r = np.linalg.matrix_power(self.tildeF, c - r)
+                    self.tildec[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(self.theoreticalBarSigma, torch.matmul(torch.transpose(tildeF_pow_c_minus_r, 1, 0), self.inv_F_Sigma) - self.compute_tildeD_r_c_m(N, r, c, c+1))
+
+        return self.tildeC
+
+    def compute_tildeD_r_c_m(self, N, k, i, m):
+        thr = 1e-20 * torch.abs(self.tildeF).max()
+        E_summed_m_to_inf = torch.zeros(self.dim_x, self.dim_x, dtype=torch.float)
+        n = m - 1
+        while True:
+            n += 1
+            if n > N - 1:
+                break
+            tmp = self.compute_tildeE(k, i, n)
+            E_summed_m_to_inf = E_summed_m_to_inf + tmp
+            if torch.abs(tmp).max() < thr:
+                break
+
+        return E_summed_m_to_inf
+
+    def compute_tildeE(self, k, i, n):
+        tildeF_pow_n_minus_k = torch.transpose(torch.matrix_power(self.tildeF, n - k), 1, 0)
+        tildeF_pow_n_minus_i_minus_1 = torch.matrix_power(self.tildeF, n - i - 1)
+        tildeE = torch.matmul(torch.transpose(tildeF_pow_n_minus_k, 1, 0), torch.matmul(self.D_int, tildeF_pow_n_minus_i_minus_1))
+
+        return tildeE
+
 
     def compute_bar_Xi_N_bar_Xi_N_transpose(self, N):
         if not(N == self.compute_bar_Xi_N_bar_Xi_N_transpose_previous):
