@@ -11,10 +11,13 @@ import torch.optim as optim
 import pickle
 import time
 
-enableTrain = False
-enableTest = True
+enableTrain = True
+enableTest = False
+enableTestCausal = False
 
-fileName = 'sys2D_secondTry' #  'sys2D_secondTry'
+simType = 'smoothing'  # {'filtering', 'smoothing'}
+
+fileName = 'sys2D_newTrySmoothing'  #'sys2D_secondTry' #  'sys2D_secondTry'
 useCuda = True
 if useCuda:
     device = 'cuda'
@@ -52,7 +55,7 @@ theoreticalPlayerImprovement = [watt2dbm(bounds_N_plus_2m[2]) - watt2dbm(bounds_
 dim_x, dim_z = sysModel['F'].shape[0], sysModel['H'].shape[1]
 Q_cholesky, R_cholesky = torch.tensor(np.linalg.cholesky(sysModel['Q']), dtype=torch.float, device=device), torch.tensor(np.linalg.cholesky(sysModel['R']), dtype=torch.float, device=device)
 
-pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=False, useCuda=useCuda)
+pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=(simType in {'smoothing'}), useCuda=useCuda)
 
 # class definition
 class RNN_Adversarial(nn.Module):
@@ -164,21 +167,36 @@ if enableTrain:
 
         # kalman filter on z:
         z = tilde_z + torch.matmul(H_transpose, u_N)
-        tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+        tilde_x_est_f, tilde_x_est_s = pytorchEstimator(z, filterStateInit)
+
         tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
         filteringErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(tilde_e_k_given_k_minus_1)
 
-        loss = - filteringErrorMeanEnergyPerBatch.mean()  # mean error energy of a single batch [W]
+        tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
+        smoothingErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(tilde_e_k_given_N_minus_1)
+
+        if simType == 'filtering':
+            loss = - filteringErrorMeanEnergyPerBatch.mean()  # mean error energy of a single batch [W]
+        elif simType == 'smoothing':
+            loss = - smoothingErrorMeanEnergyPerBatch.mean()  # mean error energy of a single batch [W]
 
         scheduler.step(loss)
         loss.backward()
         optimizer.step()  # parameter update
 
         # kalman filter on tilde_z for printing relative player contribution:
-        pure_tilde_x_est_f, _ = pytorchEstimator(tilde_z, filterStateInit)
+        pure_tilde_x_est_f, pure_tilde_x_est_s = pytorchEstimator(tilde_z, filterStateInit)
+
         pure_tilde_e_k_given_k_minus_1 = tilde_x - pure_tilde_x_est_f
         pure_filteringErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(pure_tilde_e_k_given_k_minus_1)
-        pureLoss = - pure_filteringErrorMeanEnergyPerBatch.mean()
+
+        pure_tilde_e_k_given_N_minus_1 = tilde_x - pure_tilde_x_est_s
+        pure_smoothingErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(pure_tilde_e_k_given_N_minus_1)
+
+        if simType == 'filtering':
+            pureLoss = - pure_filteringErrorMeanEnergyPerBatch.mean()
+        elif simType == 'smoothing':
+            pureLoss = - pure_smoothingErrorMeanEnergyPerBatch.mean()
 
         performance_vs_noPlayer = watt2dbm(-loss.item()) - watt2dbm(-pureLoss.item())  # db
 
@@ -199,7 +217,7 @@ if enableTrain:
 if enableTest:
     batchSize = 6500
     device = 'cpu'
-    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=False, useCuda=False)
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=(simType in {'smoothing'}), useCuda=False)
     Q_cholesky, R_cholesky = torch.tensor(np.linalg.cholesky(sysModel['Q']), dtype=torch.float, device=device), torch.tensor(np.linalg.cholesky(sysModel['R']), dtype=torch.float, device=device)
     H_transpose = torch.transpose(H, 1, 0)
     H_transpose = H_transpose.contiguous()
@@ -207,7 +225,11 @@ if enableTest:
     tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel, startAtZero=False, dp=dp)  # z: [N, batchSize, dim_z]
     tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float, device=device), torch.tensor(tilde_x, dtype=torch.float, device=device), torch.tensor(processNoises, dtype=torch.float, device=device), torch.tensor(measurementNoises, dtype=torch.float, device=device)
 
-    playerTypes = ['None', 'NoKnowledge', 'NoAccess', 'Causal', 'Genie']
+    if enableTestCausal:
+        playerTypes = ['None', 'NoKnowledge', 'NoAccess', 'Causal', 'Genie']
+    else:
+        playerTypes = ['None', 'NoKnowledge', 'NoAccess', 'Genie']
+
     for playerType in playerTypes:
         if playerType == 'None':
             # estimator init values:
@@ -218,10 +240,15 @@ if enableTest:
 
             # kalman filter on z:
             z = tilde_z
-            tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+            tilde_x_est_f, tilde_x_est_s = pytorchEstimator(z, filterStateInit)
+
             tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
             e_R_0_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_minus1_est_f = tilde_x_est_f
+
+            tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
+            e_R_0_k_given_N_minus_1 = tilde_e_k_given_N_minus_1
+            x_minus1_est_s = tilde_x_est_s
             continue
 
         if playerType == 'NoKnowledge':
@@ -236,10 +263,14 @@ if enableTest:
 
             # Kalman filters:
             z = tilde_z + torch.matmul(H_transpose, u_0)
-            tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+            tilde_x_est_f, tilde_x_est_s = pytorchEstimator(z, filterStateInit)
+
             tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
-            #e_R_0_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_0_est_f = tilde_x_est_f
+
+            tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
+            x_0_est_s = tilde_x_est_s
+
             continue
 
         playerFileName = fileName + '_' + playerType + '.pt'
@@ -268,18 +299,28 @@ if enableTest:
 
         # kalman filter on z:
         z = tilde_z + torch.matmul(H_transpose, u_N)
-        tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+        tilde_x_est_f, tilde_x_est_s = pytorchEstimator(z, filterStateInit)
         tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
+        tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
 
         if playerType == "NoAccess":
             e_R_1_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_1_est_f = tilde_x_est_f
+
+            e_R_1_k_given_N_minus_1 = tilde_e_k_given_N_minus_1
+            x_1_est_s = tilde_x_est_s
         elif playerType == "Causal":
             e_R_2_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_2_est_f = tilde_x_est_f
+
+            e_R_2_k_given_N_minus_1 = tilde_e_k_given_N_minus_1
+            x_2_est_s = tilde_x_est_s
         elif playerType == "Genie":
             e_R_3_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_3_est_f = tilde_x_est_f
+
+            e_R_3_k_given_N_minus_1 = tilde_e_k_given_N_minus_1
+            x_3_est_s = tilde_x_est_s
 
 
     plt.figure(figsize=(6,6.2))
@@ -311,8 +352,9 @@ if enableTest:
     caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
     caligraphE_F_1_mean = np.mean(caligraphE_F_1, axis=1)  # watt
 
-    caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
-    caligraphE_F_2_mean = np.mean(caligraphE_F_2, axis=1)  # watt
+    if enableTestCausal:
+        caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
+        caligraphE_F_2_mean = np.mean(caligraphE_F_2, axis=1)  # watt
 
     caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
     caligraphE_F_3_mean = np.mean(caligraphE_F_3, axis=1)  # watt
@@ -327,8 +369,8 @@ if enableTest:
         trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'$B^{(1)}_{100}$')
     # label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
-    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown',
-             label=r'$f_n(2)$')
+    if enableTestCausal:
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown', label=r'$f_n(2)$')
     # label=r'empirical ${\cal E}^{(2)}_{F,k}$')
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange',
              label=r'$f_n(3)$')
@@ -342,7 +384,11 @@ if enableTest:
     plt.grid()
     plt.show()
 
-    noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, stdList = computeBounds(tilde_x, x_minus1_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
+    if enableTestCausal:
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, stdList = computeBounds(tilde_x, x_minus1_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
+    else:
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, stdList = computeBounds(tilde_x, x_minus1_est_f, x_0_est_f, x_1_est_f, x_1_est_f, x_3_est_f)
+
     bounds = (noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound)
     noPlayerBoundStd, noKnowledgePlayerBoundStd, noAccessPlayerBoundStd, causlaPlayerBoundStd, geniePlayerBoundStd = stdList
 
@@ -350,7 +396,7 @@ if enableTest:
     print(f'no player bound is {watt2dbm(bounds[0])} dbm')
     print(f'no knowledge bound is {watt2dbm(bounds[1])} dbm; std {watt2dbm(stdList[1])} dbm; {watt2dbm(bounds[1]) - watt2dbm(bounds[0])} db mean increase in error; {watt2dbm(bounds[1]+(stdList[1]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[1]-(stdList[1]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
     print(f'no access bound is {watt2dbm(bounds[2])} dbm; std {watt2dbm(stdList[2])} dbm; {watt2dbm(bounds[2]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[2]+(stdList[2]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[2]-(stdList[2]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
-    print(f'causal bound is {watt2dbm(bounds[3])} dbm; std {watt2dbm(stdList[3])} dbm; {watt2dbm(bounds[3]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[3]+(stdList[3]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[3]-(stdList[3]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
+    if enableTestCausal: print(f'causal bound is {watt2dbm(bounds[3])} dbm; std {watt2dbm(stdList[3])} dbm; {watt2dbm(bounds[3]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[3]+(stdList[3]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[3]-(stdList[3]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
     print(f'genie bound is {watt2dbm(bounds[4])} dbm; std {watt2dbm(stdList[4])} dbm; {watt2dbm(bounds[4]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[4]+(stdList[4]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[4]-(stdList[4]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
 
 
