@@ -14,7 +14,7 @@ import time
 enablePlotOnly = False#True
 enableInvestigateAllN = False#False
 enableReadAllFiles = False
-enableGammaPlot = False
+enableGammaPlot = True
 
 gammaValues = np.arange(0, 0.4, 0.1/5).tolist()
 gammaValues[0] = 1e-6
@@ -101,7 +101,7 @@ if enableGammaPlot:
     plt.plot(gammaValues/tr_Q, genieBound)
     plt.grid()
     plt.xlabel(r'${\gamma}/{tr(Q)}$', fontsize=16)
-    plt.ylabel(r'$I_{N}(\gamma)$ [W]', fontsize=16)
+    plt.ylabel(r'$I_{N}(\gamma)$ [Watt]', fontsize=16)
     plt.title(r'$I_{N}(\gamma) = \sum_{k=0}^{N-1} ||e_{k \mid k-1}||_2^2 - ||e_{k \mid N-1}||_2^2$', fontsize=14)
     plt.show()
     exit()
