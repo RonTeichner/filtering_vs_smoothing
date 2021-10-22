@@ -17,10 +17,10 @@ savedGammaResults = pickle.load(open(fileName + '_gammaResults.pt', 'rb'))
 sysModel, N, gammaResultList = savedGammaResults
 
 # training properties:
-batchSize = 40
+batchSize = 8*40
 validation_fraction = 0.2
-nSeriesForTrain = 1000
-nSeriesForTest = 1000
+nSeriesForTrain = 10000
+nSeriesForTest = 10000
 
 class MeasurementsDataset(Dataset):
     def __init__(self, sysModel, nTime, nSeries, transform=None):
@@ -32,8 +32,27 @@ class MeasurementsDataset(Dataset):
     def getBatch(self, sysModel, nTimePoints, nSeries):
         device = 'cpu'
         tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(nTimePoints, nSeries, sysModel, startAtZero=False, dp=False)  # z: [N, nSeries, dim_z]
+
+        # unmodeled behavior:
+        tr_Q = np.trace(sysModel['Q'])
+        u = np.zeros_like(tilde_x)
+        #u[:, :, 0, 0] = np.power(tilde_x[:, :, 1, 0], 1)
+        u[:, :, 0, 0] = np.power(tilde_x[:, :, 1, 0], 2) * (tilde_x[:, :, 1, 0] > 0)
+        u[:, :, 1, 0] = np.power(tilde_x[:, :, 0, 0], 2) * (tilde_x[:, :, 0, 0] > 0)
+        #u_mean_watt = np.power(u, 2).sum(axis=2).flatten().mean()
+        #alpha = 0
+        #u = alpha*u
+        u_mean_watt = np.power(u, 2).sum(axis=2).flatten().mean()
+        gamma_wrt_tr_Q = u_mean_watt/tr_Q
+        print(f'$\gamma/tr(Q)$ = {gamma_wrt_tr_Q}')
+        np.power(np.matmul(np.transpose(sysModel['H']), u), 2).sum(axis=2).flatten().mean()
+
+        z = tilde_z + np.matmul(np.transpose(sysModel['H']), u)
+
         tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float, device=device), torch.tensor(tilde_x, dtype=torch.float, device=device), torch.tensor(processNoises, dtype=torch.float, device=device), torch.tensor(measurementNoises, dtype=torch.float, device=device)
-        return {'tilde_z': tilde_z, 'tilde_x': tilde_x}
+        z = torch.tensor(z, dtype=torch.float, device=device)
+
+        return {'z': z, 'tilde_z': tilde_z, 'tilde_x': tilde_x}
 
     def __len__(self):
         return self.completeDataSet['tilde_z'].shape[1]
@@ -42,7 +61,7 @@ class MeasurementsDataset(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        sample = {'z': self.completeDataSet['tilde_z'][:, idx], 'x': self.completeDataSet['tilde_x'][:, idx]}
+        sample = {'z': self.completeDataSet['z'][:, idx], 'tilde_z': self.completeDataSet['tilde_z'][:, idx], 'x': self.completeDataSet['tilde_x'][:, idx]}
 
         if self.transform:
             sample = self.transform(sample)
@@ -75,11 +94,15 @@ class RNN_Filter(nn.Module):
 def trainModel(model, pytorchEstimator, trainLoader, validationLoader):
     filter_P_init = pytorchEstimator.theoreticalBarSigma.cpu().numpy()  # filter @ time-series but all filters have the same init
     criterion = nn.MSELoss()
-    lowThrLr = 1e-6
+    lowThrLr = 1e-5
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, threshold=1e-6)
     # moving model to cuda:
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.device_count() > 1:
+        # print("Let's use", torch.cuda.device_count(), "GPUs!")
+        # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+        model = nn.DataParallel(model)
     model.to(device)
     x_0_train_given_minus_1 = torch.zeros((1, trainLoader.batch_size, pytorchEstimator.dim_x), dtype=torch.float, device=device)
     x_0_validation_given_minus_1 = torch.zeros((1, validationLoader.batch_size, pytorchEstimator.dim_x), dtype=torch.float, device=device)
@@ -134,14 +157,14 @@ def trainModel(model, pytorchEstimator, trainLoader, validationLoader):
 
             # kalman filter on z:
             tilde_x_est_f, tilde_x_est_s = pytorchEstimator(z, filterStateInit)
-            loss = criterion(learned_tilde_x_est_f, tilde_x_est_f)
+            loss = criterion(learned_tilde_x_est_f, tilde_x_est_s)
             validation_loss += loss.item()
 
         validation_loss = validation_loss/(i_batch+1)
         if min_valid_loss > validation_loss:
             print(f'epoch {epoch}, Validation loss Decreased({min_valid_loss:.6f}--->{validation_loss:.6f}); lr: {scheduler._last_lr[-1]}')
             min_valid_loss = validation_loss
-            torch.save(model.state_dict(), 'saved_modelFilter.pt')
+            torch.save(model.module.state_dict(), 'saved_modelFilter.pt')
 
         if scheduler._last_lr[-1] < lowThrLr:
             print(f'Stoping optimization due to learning rate of {scheduler._last_lr[-1]}')
@@ -169,8 +192,8 @@ else:
 pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
 
 # create the trained model
-hidden_dim = 100
-num_layers = 3
+hidden_dim = 10
+num_layers = 2
 Filter_rnn = RNN_Filter(input_dim = pytorchEstimator.dim_z, hidden_dim=hidden_dim, output_dim=pytorchEstimator.dim_x, num_layers=num_layers)
 
 trainModel(Filter_rnn, pytorchEstimator, trainLoader, validationLoader)
@@ -178,6 +201,7 @@ trainModel(Filter_rnn, pytorchEstimator, trainLoader, validationLoader)
 # test
 print('starting test')
 pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=False)
+Filter_rnn = RNN_Filter(input_dim = pytorchEstimator.dim_z, hidden_dim=hidden_dim, output_dim=pytorchEstimator.dim_x, num_layers=num_layers)
 device = 'cpu'
 Filter_rnn.load_state_dict(torch.load('saved_modelFilter.pt'))
 Filter_rnn.eval().to(device)
@@ -186,9 +210,10 @@ testLoader = DataLoader(patientsTestDataset, batch_size=nSeriesForTest, shuffle=
 x_0_test_given_minus_1 = torch.zeros((1, testLoader.batch_size, pytorchEstimator.dim_x), dtype=torch.float, device=device)
 filter_P_init = pytorchEstimator.theoreticalBarSigma.cpu().numpy()  # filter @ time-series but all filters have the same init
 for i_batch, sample_batched in enumerate(testLoader):
+    tilde_z = sample_batched["tilde_z"].transpose(1, 0)
     z = sample_batched["z"].transpose(1, 0)
     x = sample_batched["x"].transpose(1, 0)
-    #z = z.to(device)
+
     currentBatchSize = z.shape[1]
     hat_x_k_plus_1_given_k = Filter_rnn(z)
     learned_tilde_x_est_f = torch.cat((x_0_test_given_minus_1[:, :currentBatchSize], hat_x_k_plus_1_given_k[:-1]), dim=0)[:, :, :, None]
@@ -209,11 +234,38 @@ for i_batch, sample_batched in enumerate(testLoader):
     kalman_e_k_give_k_minus_1_watt = np.power(kalman_e_k_give_k_minus_1, 2).sum(axis=2).flatten()
     kalman_e_k_give_N_minus_1_watt = np.power(kalman_e_k_give_N_minus_1, 2).sum(axis=2).flatten()
 
+    # kalman filter on tilde_z:
+    pure_tilde_x_est_f, pure_tilde_x_est_s = pytorchEstimator(tilde_z, filterStateInit)
+
+    pure_kalman_e_k_give_k_minus_1 = (x - pure_tilde_x_est_f).detach().numpy()
+    pure_kalman_e_k_give_N_minus_1 = (x - pure_tilde_x_est_s).detach().numpy()
+
+    pure_kalman_e_k_give_k_minus_1_watt = np.power(pure_kalman_e_k_give_k_minus_1, 2).sum(axis=2).flatten()
+    pure_kalman_e_k_give_N_minus_1_watt = np.power(pure_kalman_e_k_give_N_minus_1, 2).sum(axis=2).flatten()
+
+    print(f'pure kalman filter MSE {watt2dbm(pure_kalman_e_k_give_k_minus_1_watt.mean())} dbm; {(pure_kalman_e_k_give_k_minus_1_watt.mean())} W')
+    print(f'kalman filter MSE {watt2dbm(kalman_e_k_give_k_minus_1_watt.mean())} dbm; {(kalman_e_k_give_k_minus_1_watt.mean())} W')
+    print(f'learned filter MSE {watt2dbm(learned_e_k_give_k_minus_1_watt.mean())} dbm; {(learned_e_k_give_k_minus_1_watt.mean())} W')
+
+    print(f'pure kalman smoother MSE {watt2dbm(pure_kalman_e_k_give_N_minus_1_watt.mean())} dbm; {(pure_kalman_e_k_give_N_minus_1_watt.mean())} W')
+    print(f'kalman smoother MSE {watt2dbm(kalman_e_k_give_N_minus_1_watt.mean())} dbm; {(kalman_e_k_give_N_minus_1_watt.mean())} W')
+
+    totalKalmanIncrease = kalman_e_k_give_k_minus_1_watt.mean() - pure_kalman_e_k_give_k_minus_1_watt.mean()
+    print(f'kalman filter error increases by {totalKalmanIncrease} [W] due to the unmodeled behavior')
+    decreaseOfLearned = kalman_e_k_give_k_minus_1_watt.mean() - learned_e_k_give_k_minus_1_watt.mean()
+    print(f'learned filter error is {decreaseOfLearned} [W] below the standart kalman filter')
+    print(f'learned filter removed {decreaseOfLearned/totalKalmanIncrease*100} % of the increase in error of the standart filter')
+
+
+
     plt.figure()
     n_bins = 1000
-    n, bins, patches = plt.hist(watt2dbm(kalman_e_k_give_k_minus_1_watt), n_bins, density=True, histtype='step', cumulative=True, label=r'Kalman filter')
-    n, bins, patches = plt.hist(watt2dbm(kalman_e_k_give_N_minus_1_watt), n_bins, density=True, histtype='step', cumulative=True, label=r'Kalman smoother')
-    n, bins, patches = plt.hist(watt2dbm(learned_e_k_give_k_minus_1_watt), n_bins, density=True, histtype='step', cumulative=True, label=r'learned filter')
+    n, bins, patches = plt.hist(watt2dbm(pure_kalman_e_k_give_k_minus_1_watt), n_bins, color='green', linestyle = 'dashed', density=True, histtype='step', cumulative=True)
+    n, bins, patches = plt.hist(watt2dbm(pure_kalman_e_k_give_N_minus_1_watt), n_bins, color='blue', linestyle = 'dashed', density=True, histtype='step', cumulative=True)
+
+    n, bins, patches = plt.hist(watt2dbm(kalman_e_k_give_k_minus_1_watt), n_bins, color='green', density=True, histtype='step', cumulative=True, label=r'Kalman filter')
+    n, bins, patches = plt.hist(watt2dbm(kalman_e_k_give_N_minus_1_watt), n_bins, color='blue', density=True, histtype='step', cumulative=True, label=r'Kalman smoother')
+    n, bins, patches = plt.hist(watt2dbm(learned_e_k_give_k_minus_1_watt), n_bins, color='orange', density=True, histtype='step', cumulative=True, label=r'learned filter')
     plt.xlabel('dbm')
     plt.title(r'CDF of estimation errors')
     plt.grid(True)
