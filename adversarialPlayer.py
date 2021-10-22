@@ -15,10 +15,12 @@ enablePlotOnly = False#True
 enableInvestigateAllN = False#False
 enableReadAllFiles = False
 
+gamma = 1.5
+
 enableLimitSearch = False
 
-simType = 'smoothing'  #{'filtering', 'smoothing'}
-fileName = 'sys2D_newTrySmoothing'
+simType = 's_vs_f'  #{'filtering', 'smoothing', 's_vs_f'}
+fileName = 'sys2D_FilteringVsSmoothing' #'sys2D_FilteringVsSmoothing', 'sys2D_Smoothing'
 
 if enableReadAllFiles:
     fileName = fileName + '_allN_'
@@ -82,14 +84,14 @@ if enableInvestigateAllN:
     bounds_N_list = list()
     for N in N_list:
         print(f'all N calculations, N = {N}')
-        bounds_N, _ = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, simType, fileName)
+        bounds_N, _ = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, gamma, simType, fileName)
         bounds_N_list.append(bounds_N)
         pickle.dump([sysModel, bounds_N_list], open(fileName + '.pt', 'wb'))
     exit()
 
 
 dim_x, dim_z = 2, 2
-#seed = 13
+seed = 13
 
 useCuda = False
 
@@ -132,7 +134,7 @@ if enableLimitSearch:
         if usePreviousRoundResults:
             bounds_N, currentFileName_N = bounds_N_plus_m, currentFileName_N_plus_m
         else:
-            bounds_N, currentFileName_N = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, simType, fileName)
+            bounds_N, currentFileName_N = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, gamma, simType, fileName)
         # plotting:
         # adversarialPlayerPlotting(currentFileName_N)
 
@@ -142,11 +144,11 @@ if enableLimitSearch:
         if usePreviousRoundResults:
             bounds_N_plus_m, currentFileName_N_plus_m = bounds_N_plus_2m, currentFileName_N_plus_2m
         else:
-            bounds_N_plus_m, currentFileName_N_plus_m = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, True, N + m, mistakeBound, delta_trS, enableCausalPlayer, simType, fileName)
+            bounds_N_plus_m, currentFileName_N_plus_m = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, True, N + m, mistakeBound, delta_trS, enableCausalPlayer, gamma, simType, fileName)
         # plotting:
         # adversarialPlayerPlotting(currentFileName_N_plus_m)
 
-        bounds_N_plus_2m, currentFileName_N_plus_2m = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, True, N + 2*m, mistakeBound, delta_trS, enableCausalPlayer, simType, fileName)
+        bounds_N_plus_2m, currentFileName_N_plus_2m = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, True, N + 2*m, mistakeBound, delta_trS, enableCausalPlayer, gamma, simType, fileName)
         # plotting:
         # adversarialPlayerPlotting(currentFileName_N_plus_2m)
         # plt.show()
@@ -169,7 +171,7 @@ if enableLimitSearch:
                 usePreviousRoundResults = False
                 #continue
 
-            pickle.dump([sysModel, bounds_N, currentFileName_N, bounds_N_plus_m, currentFileName_N_plus_m, bounds_N_plus_2m, currentFileName_N_plus_2m, mistakeBound, delta_trS, gapFromInfBound],
+            pickle.dump([sysModel, bounds_N, currentFileName_N, bounds_N_plus_m, currentFileName_N_plus_m, bounds_N_plus_2m, currentFileName_N_plus_2m, mistakeBound, delta_trS, gapFromInfBound, gamma],
                         open(fileName + '_final_' + '.pt', 'wb'))
             print('bounds file saved')
             print(f'no player bound is {watt2dbm(bounds_N[0])} dbm')
@@ -182,10 +184,11 @@ if enableLimitSearch:
             plt.show()
             break
 else:
-    bounds_N, currentFileName_N = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, simType, fileName)
+
+    bounds_N, currentFileName_N = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, gamma, simType, fileName)
 
     pickle.dump([sysModel, bounds_N, currentFileName_N, bounds_N, currentFileName_N, bounds_N,
-                 currentFileName_N, mistakeBound, delta_trS, gapFromInfBound],
+                 currentFileName_N, mistakeBound, delta_trS, gapFromInfBound, gamma],
                 open(fileName + '_final_' + '.pt', 'wb'))
 
     print('bounds file saved')
