@@ -647,13 +647,13 @@ class playersToolbox:
     def compute_Xi_s_N_eigenvalues(self, N):
         if not(N == self.compute_Xi_s_N_previous_N_eigenvalues):
             self.compute_Xi_s_N_previous_N_eigenvalues = N
-            self.Xi_s_N_eig = torch.symeig(self.Xi_s_N, eigenvectors=True)
+            self.Xi_s_N_eig = torch.symeig(self.compute_Xi_s_N(N), eigenvectors=True)
         return self.Xi_s_N_eig
 
     def compute_Xi_s_N_minus_Xi_N_eigenvalues(self, N):
         if not(N == self.compute_Xi_s_N_minus_Xi_N_previous_N_eigenvalues):
             self.compute_Xi_s_N_minus_Xi_N_previous_N_eigenvalues = N
-            self.Xi_s_N_minus_Xi_N_eig = torch.symeig(self.Xi_s_N - self.compute_Xi_l_N(0, N), eigenvectors=True)
+            self.Xi_s_N_minus_Xi_N_eig = torch.symeig(self.compute_Xi_s_N(N) - self.compute_Xi_l_N(0, N), eigenvectors=True)
         return self.Xi_s_N_minus_Xi_N_eig
 
     def compute_bar_Xi_s_N(self, N):

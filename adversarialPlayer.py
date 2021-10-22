@@ -14,8 +14,10 @@ import time
 enablePlotOnly = False#True
 enableInvestigateAllN = False#False
 enableReadAllFiles = False
+enableGammaPlot = False
 
-gamma = 1.5
+gammaValues = np.arange(0, 0.4, 0.1/5).tolist()
+gammaValues[0] = 1e-6
 
 enableLimitSearch = False
 
@@ -89,9 +91,24 @@ if enableInvestigateAllN:
         pickle.dump([sysModel, bounds_N_list], open(fileName + '.pt', 'wb'))
     exit()
 
+if enableGammaPlot:
+    savedGammaResults = pickle.load(open(fileName + '_gammaResults.pt', 'rb'))
+    sysModel, N, gammaResultList = savedGammaResults
+    tr_Q = np.trace(sysModel['Q'])
+    gammaValues = [gammaRes[0] for gammaRes in gammaResultList]
+    genieBound = [gammaRes[1][4] for gammaRes in gammaResultList]
+
+    plt.plot(gammaValues/tr_Q, genieBound)
+    plt.grid()
+    plt.xlabel(r'${\gamma}/{tr(Q)}$', fontsize=16)
+    plt.ylabel(r'$I_{N}(\gamma)$ [W]', fontsize=16)
+    plt.title(r'$I_{N}(\gamma) = \sum_{k=0}^{N-1} ||e_{k \mid k-1}||_2^2 - ||e_{k \mid N-1}||_2^2$', fontsize=14)
+    plt.show()
+    exit()
 
 dim_x, dim_z = 2, 2
-seed = 13
+
+seed = 13  #np.random.randint(1e6)
 
 useCuda = False
 
@@ -108,7 +125,7 @@ mistakeBound, delta_trS = 1*1e-2, 1*1e-2
 # therefore gamma = sqrt(1/mistakeBound)
 # and M = (gamma * boundVar) / (delta_trS * tr{Sigma}) = (sqrt(1/mistakeBound) * boundVar) / (delta_trS * tr{Sigma})
 
-#np.random.seed(seed)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
+np.random.seed(seed)  #  for 2D systems, seed=13 gives two control angles, seed=10 gives multiple angles, seed=9 gives a single angle
 
 # create a single system model:
 sysModel = GenSysModel(dim_x, dim_z)
@@ -128,6 +145,13 @@ pytorchEstimator.eval()
 delta_u, delta_caligraphE = 1e-3, 1e-3
 adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, True)
 usePreviousRoundResults = False
+
+Xi_N_minus_Xi_s_N_eigenvalues = -adversarialPlayersToolbox.compute_Xi_s_N_minus_Xi_N_eigenvalues(N)[0]
+if Xi_N_minus_Xi_s_N_eigenvalues.min() > 0:
+    print('filtering errors bigger than smoothing errors with no access')
+    # this seem to never happen
+else:
+    print('smoothing errors can be bigger than filtering errors')
 
 if enableLimitSearch:
     while True:
@@ -184,21 +208,33 @@ if enableLimitSearch:
             plt.show()
             break
 else:
+    gammaResultList = list()
+    for gamma in gammaValues:
+        print(f'starting gamma value = {gamma}')
+        bounds_N, currentFileName_N = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, gamma, simType, fileName)
 
-    bounds_N, currentFileName_N = runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox, useCuda, True, N, mistakeBound, delta_trS, enableCausalPlayer, gamma, simType, fileName)
+        pickle.dump([sysModel, bounds_N, currentFileName_N, bounds_N, currentFileName_N, bounds_N,
+                     currentFileName_N, mistakeBound, delta_trS, gapFromInfBound, gamma],
+                    open(fileName + '_final_' + '.pt', 'wb'))
 
-    pickle.dump([sysModel, bounds_N, currentFileName_N, bounds_N, currentFileName_N, bounds_N,
-                 currentFileName_N, mistakeBound, delta_trS, gapFromInfBound, gamma],
-                open(fileName + '_final_' + '.pt', 'wb'))
-
-    print('bounds file saved')
-    print(f'no player bound is {watt2dbm(bounds_N[0])} dbm')
-    print(f'no knowledge bound is {watt2dbm(bounds_N[1])} dbm')
-    print(f'no access bound is {watt2dbm(bounds_N[2])} dbm')
-    print(f'causal bound is {watt2dbm(bounds_N[3])} dbm')
-    print(f'genie bound is {watt2dbm(bounds_N[4])} dbm')
-    # plotting:
-    adversarialPlayerPlotting(currentFileName_N, simType)
-    plt.show()
+        print('bounds file saved')
+        if simType in {'s_vs_f'}:
+            print(f'no player bound is {(bounds_N[0])} W')
+            print(f'no knowledge bound is {(bounds_N[1])} W')
+            print(f'no access bound is {(bounds_N[2])} W')
+            print(f'causal bound is {(bounds_N[3])} W')
+            print(f'genie bound is {(bounds_N[4])} W')
+            gammaResultList.append((gamma, bounds_N))
+        else:
+            print(f'no player bound is {watt2dbm(bounds_N[0])} dbm')
+            print(f'no knowledge bound is {watt2dbm(bounds_N[1])} dbm')
+            print(f'no access bound is {watt2dbm(bounds_N[2])} dbm')
+            print(f'causal bound is {watt2dbm(bounds_N[3])} dbm')
+            print(f'genie bound is {watt2dbm(bounds_N[4])} dbm')
+            # plotting:
+            adversarialPlayerPlotting(currentFileName_N, simType)
+            plt.show()
+    if simType in {'s_vs_f'}:
+        pickle.dump([sysModel, N, gammaResultList], open(fileName + '_gammaResults.pt', 'wb'))
 
 
