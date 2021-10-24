@@ -97,12 +97,12 @@ if enableGammaPlot:
     tr_Q = np.trace(sysModel['Q'])
     gammaValues = [gammaRes[0] for gammaRes in gammaResultList]
     genieBound = [gammaRes[1][4] for gammaRes in gammaResultList]
-
+    #plt.figure(figsize=(5,3))
     plt.plot(gammaValues/tr_Q, genieBound)
     plt.grid()
-    plt.xlabel(r'${\gamma}/{tr(Q)}$', fontsize=16)
+    plt.xlabel(r'${\gamma}/{tr(Q)}$', fontsize=12)
     plt.ylabel(r'$I_{N}(\gamma)$ [Watt]', fontsize=16)
-    plt.title(r'$I_{N}(\gamma) = \sum_{k=0}^{N-1} ||e_{k \mid k-1}||_2^2 - ||e_{k \mid N-1}||_2^2$', fontsize=14)
+    #plt.title(r'$I_{N}(\gamma) = \sum_{k=0}^{N-1} ||e_{k \mid k-1}||_2^2 - ||e_{k \mid N-1}||_2^2$', fontsize=14)
     plt.show()
     exit()
 
