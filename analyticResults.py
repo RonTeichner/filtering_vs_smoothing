@@ -270,8 +270,8 @@ if enableUnmodeledBehaviourSim:
     plt.show()
 
 if enableUnmodeledBehaviourHighDimSim:
-    np.random.seed(11) # gives unmodeled noise thr of 4.57
-    #np.random.seed(9)  # gives unmodeled noise thr of -57.54
+    #np.random.seed(11) # gives unmodeled noise thr of 4.57
+    np.random.seed(9)  # gives unmodeled noise thr of -57.54
 
     enableDirectVsRecursiveSmoothingDiffCheck = True
 

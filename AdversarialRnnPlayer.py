@@ -11,10 +11,15 @@ import torch.optim as optim
 import pickle
 import time
 
-enableTrain = False
-enableTest = True
 
-fileName = 'sys2D_secondTry' #  'sys2D_secondTry'
+
+enableTrain = True
+enableTest = False
+enableTestCausal = False
+
+simType = 's_vs_f'  # {'filtering', 'smoothing', 's_vs_f'}
+
+fileName = 'sys2D_FilteringVsSmoothing'  #'sys2D_secondTry' #  'sys2D_secondTry'
 useCuda = True
 if useCuda:
     device = 'cuda'
@@ -22,13 +27,16 @@ else:
     device = 'cpu'
 
 batchSize = 100
-num_layers, hidden_size = 2, 100
+num_layers, hidden_size = 5, 1000
 dp = False
 
 lowThrLr = 1e-6
 
-playerType = 'NoAccess'  # {'NoAccess', 'Causal', 'Genie'}
-if playerType == 'NoAccess':
+playerType = 'NoAccess'  # {NoKnowledge', 'NoAccess', 'Causal', 'Genie'}
+
+if playerType == 'NoKnowledge':
+    p = 0
+elif playerType == 'NoAccess':
     p = 1
 elif playerType == 'Causal':
     p = 2
@@ -36,7 +44,7 @@ elif playerType == 'Genie':
     p = 3
 
 savedList = pickle.load(open(fileName + '_final_' + '.pt', "rb"))
-sysModel, bounds_N, currentFileName_N, bounds_N_plus_m, currentFileName_N_plus_m, bounds_N_plus_2m, currentFileName_N_plus_2m, mistakeBound, delta_trS, gapFromInfBound = savedList
+sysModel, bounds_N, currentFileName_N, bounds_N_plus_m, currentFileName_N_plus_m, bounds_N_plus_2m, currentFileName_N_plus_2m, mistakeBound, delta_trS, gapFromInfBound, gamma = savedList
 savedList = pickle.load(open(currentFileName_N_plus_2m, "rb"))
 N = savedList[2]
 
@@ -47,21 +55,30 @@ print(f'no access bound is {watt2dbm(bounds_N_plus_2m[2])} dbm; {watt2dbm(bounds
 print(f'causal bound is {watt2dbm(bounds_N_plus_2m[3])} dbm; {watt2dbm(bounds_N_plus_2m[3]) - watt2dbm(bounds_N_plus_2m[0])} db')
 print(f'genie bound is {watt2dbm(bounds_N_plus_2m[4])} dbm; {watt2dbm(bounds_N_plus_2m[4]) - watt2dbm(bounds_N_plus_2m[0])} db')
 
-theoreticalPlayerImprovement = [watt2dbm(bounds_N_plus_2m[2]) - watt2dbm(bounds_N_plus_2m[0]), watt2dbm(bounds_N_plus_2m[3]) - watt2dbm(bounds_N_plus_2m[0]), watt2dbm(bounds_N_plus_2m[4]) - watt2dbm(bounds_N_plus_2m[0])]  # [noAccess, Causal, Genie]
+print(f'no player bound is {(bounds_N_plus_2m[0])} W')
+print(f'no knowledge bound is {(bounds_N_plus_2m[1])} W; {(bounds_N_plus_2m[1]) - (bounds_N_plus_2m[0])} W')
+print(f'no access bound is {(bounds_N_plus_2m[2])} W; {(bounds_N_plus_2m[2]) - (bounds_N_plus_2m[0])} W')
+print(f'causal bound is {(bounds_N_plus_2m[3])} W; {(bounds_N_plus_2m[3]) - (bounds_N_plus_2m[0])} W')
+print(f'genie bound is {(bounds_N_plus_2m[4])} W; {(bounds_N_plus_2m[4]) - (bounds_N_plus_2m[0])} W')
+
+theoreticalPlayerImprovement_db = [watt2dbm(bounds_N_plus_2m[1]) - watt2dbm(bounds_N_plus_2m[0]), watt2dbm(bounds_N_plus_2m[2]) - watt2dbm(bounds_N_plus_2m[0]), watt2dbm(bounds_N_plus_2m[3]) - watt2dbm(bounds_N_plus_2m[0]), watt2dbm(bounds_N_plus_2m[4]) - watt2dbm(bounds_N_plus_2m[0])]  # [NoKnowledge, noAccess, Causal, Genie]
+theoreticalPlayerImprovement_W = [(bounds_N_plus_2m[1]) - (bounds_N_plus_2m[0]), (bounds_N_plus_2m[2]) - (bounds_N_plus_2m[0]), (bounds_N_plus_2m[3]) - (bounds_N_plus_2m[0]), (bounds_N_plus_2m[4]) - (bounds_N_plus_2m[0])]  # [NoKnowledge, noAccess, Causal, Genie]
 
 dim_x, dim_z = sysModel['F'].shape[0], sysModel['H'].shape[1]
 Q_cholesky, R_cholesky = torch.tensor(np.linalg.cholesky(sysModel['Q']), dtype=torch.float, device=device), torch.tensor(np.linalg.cholesky(sysModel['R']), dtype=torch.float, device=device)
 
-pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=False, useCuda=useCuda)
+sigma_u_square = torch.tensor(gamma / dim_x, dtype=torch.float).to(device)
+
+pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=(simType in {'smoothing','s_vs_f'}), useCuda=useCuda)
 
 # class definition
 class RNN_Adversarial(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers, gamma):
         super(RNN_Adversarial, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
-
+        self.gamma = gamma
         # setup RNN layer
         #self.Adv_rnn = nn.GRU(self.input_dim, self.hidden_dim, self.num_layers)
         self.Adv_rnn = nn.LSTM(self.input_dim, self.hidden_dim, self.num_layers)
@@ -75,11 +92,11 @@ class RNN_Adversarial(nn.Module):
         dim_x = u_NxN.shape[3]
 
         if useCuda:
-            totalLeftEnergy = N*torch.ones(batchSize, dtype=torch.float).cuda()
+            totalLeftEnergy = self.gamma * N * torch.ones(batchSize, dtype=torch.float).cuda()
             u_N = torch.zeros(N, batchSize, dim_x, dtype=torch.float).cuda()
             N_tensor = torch.tensor(np.sqrt(N), dtype=torch.float).cuda()
         else:
-            totalLeftEnergy = N * torch.ones(batchSize, dtype=torch.float)
+            totalLeftEnergy = self.gamma * N * torch.ones(batchSize, dtype=torch.float)
             u_N = torch.zeros(N, batchSize, dim_x, dtype=torch.float)
             N_tensor = torch.tensor(np.sqrt(N), dtype=torch.float)
 
@@ -115,10 +132,10 @@ class RNN_Adversarial(nn.Module):
 
 # Define player
 print("Build RNN player model ...")
-player = RNN_Adversarial(input_dim=N*(dim_x + dim_z), hidden_dim=hidden_size, output_dim=N*dim_x, num_layers=num_layers).to(device=device)
+player = RNN_Adversarial(input_dim=N*(dim_x + dim_z), hidden_dim=hidden_size, output_dim=N*dim_x, num_layers=num_layers, gamma=gamma).to(device=device)
 
-optimizer = optim.Adam(player.parameters(), lr=0.01)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, threshold=1e-6)
+optimizer = optim.Adam(player.parameters(), lr=0.001)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=100, threshold=1e-6)
 
 H = torch.tensor(sysModel["H"], dtype=torch.float, requires_grad=False)
 H_transpose = torch.transpose(H, 1, 0)
@@ -147,12 +164,15 @@ if enableTrain:
         tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float, device=device), torch.tensor(tilde_x, dtype=torch.float, device=device), torch.tensor(processNoises, dtype=torch.float, device=device), torch.tensor(measurementNoises, dtype=torch.float, device=device)
 
         # knowledge gate:
-        processNoisesKnown2Player, measurementNoisesKnown2Player = knowledgeGate(Q_cholesky, R_cholesky, playerType, processNoises, measurementNoises, device)
-        # processNoisesKnown2Player  shape: [N, batchSize, N, dim_x, 1]
-        # measurementNoisesKnown2Player  shape: [N, batchSize, N, dim_z, 1]
+        if p > 0:
+            processNoisesKnown2Player, measurementNoisesKnown2Player = knowledgeGate(Q_cholesky, R_cholesky, playerType, processNoises, measurementNoises, device)
+            # processNoisesKnown2Player  shape: [N, batchSize, N, dim_x, 1]
+            # measurementNoisesKnown2Player  shape: [N, batchSize, N, dim_z, 1]
 
-        # Adversarial player:
-        u_N, _ = player(processNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1), measurementNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1))
+            # Adversarial player:
+            u_N, _ = player(processNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1), measurementNoisesKnown2Player[:, :, :, :, 0].reshape(N, batchSize, -1))
+        else:
+            u_N = torch.sqrt(sigma_u_square) * torch.randn(N, batchSize, dim_x, 1, device=device)
 
         #  u_N.pow(2).sum(dim=2).sum(dim=0)  # this shows the energy used by the player at every batch
 
@@ -164,32 +184,61 @@ if enableTrain:
 
         # kalman filter on z:
         z = tilde_z + torch.matmul(H_transpose, u_N)
-        tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+        tilde_x_est_f, tilde_x_est_s = pytorchEstimator(z, filterStateInit)
+
         tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
         filteringErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(tilde_e_k_given_k_minus_1)
 
-        loss = - filteringErrorMeanEnergyPerBatch.mean()  # mean error energy of a single batch [W]
+        tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
+        smoothingErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(tilde_e_k_given_N_minus_1)
 
+        if simType == 'filtering':
+            loss = - filteringErrorMeanEnergyPerBatch.mean()  # mean error energy of a single batch [W]
+        elif simType == 'smoothing':
+            loss = - smoothingErrorMeanEnergyPerBatch.mean()  # mean error energy of a single batch [W]
+        elif simType == 's_vs_f':
+            loss = filteringErrorMeanEnergyPerBatch.mean() - smoothingErrorMeanEnergyPerBatch.mean() # mean error energy of a single batch [W]
+
+        if p > 0:
+            loss.backward()
+            optimizer.step()  # parameter update
         scheduler.step(loss)
-        loss.backward()
-        optimizer.step()  # parameter update
 
         # kalman filter on tilde_z for printing relative player contribution:
-        pure_tilde_x_est_f, _ = pytorchEstimator(tilde_z, filterStateInit)
+        pure_tilde_x_est_f, pure_tilde_x_est_s = pytorchEstimator(tilde_z, filterStateInit)
+
         pure_tilde_e_k_given_k_minus_1 = tilde_x - pure_tilde_x_est_f
         pure_filteringErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(pure_tilde_e_k_given_k_minus_1)
-        pureLoss = - pure_filteringErrorMeanEnergyPerBatch.mean()
 
-        performance_vs_noPlayer = watt2dbm(-loss.item()) - watt2dbm(-pureLoss.item())  # db
+        pure_tilde_e_k_given_N_minus_1 = tilde_x - pure_tilde_x_est_s
+        pure_smoothingErrorMeanEnergyPerBatch = calcTimeSeriesMeanEnergy(pure_tilde_e_k_given_N_minus_1)
+
+        if simType == 'filtering':
+            pureLoss = - pure_filteringErrorMeanEnergyPerBatch.mean()
+        elif simType == 'smoothing':
+            pureLoss = - pure_smoothingErrorMeanEnergyPerBatch.mean()
+        elif simType == 's_vs_f':
+            pureLoss = pure_filteringErrorMeanEnergyPerBatch.mean() - pure_smoothingErrorMeanEnergyPerBatch.mean()
+
+
+        performance_vs_noPlayer_db = watt2dbm(-loss.item()) - watt2dbm(-pureLoss.item())  # db
+        if simType in {'filtering', 'smoothing'}:
+            performance_vs_noPlayer = -(loss.item() - pureLoss.item())
+            bound = -loss.item()
+        elif simType in {'s_vs_f'}:
+            performance_vs_noPlayer = -(loss.item() - pureLoss.item())
+            bound = loss.item()
 
         if performance_vs_noPlayer > bestPerformanceVsNoPlayer + saveThr:
             bestPerformanceVsNoPlayer = performance_vs_noPlayer
-            bestgap = theoreticalPlayerImprovement[p-1] - bestPerformanceVsNoPlayer
+            bestgap = theoreticalPlayerImprovement_W[p-1] - bestPerformanceVsNoPlayer
             torch.save(player.state_dict(), playerFileName)
             print('player saved')
 
 
-        print(f'epoch {epoch}: MSE w.r.t pure input is {performance_vs_noPlayer} db; gap from theoretical: {theoreticalPlayerImprovement[p-1] - performance_vs_noPlayer}; lr: {scheduler._last_lr[-1]}')
+        #print(f'epoch {epoch}: MSE w.r.t pure input is {performance_vs_noPlayer_db} db; gap from theoretical: {theoreticalPlayerImprovement_db[p] - performance_vs_noPlayer_db}; lr: {scheduler._last_lr[-1]}')
+        #print(f'epoch {epoch}: bound = {bound}, MSE w.r.t pure input is {performance_vs_noPlayer}; gap from theoretical: {theoreticalPlayerImprovement_W[p] - performance_vs_noPlayer}; lr: {scheduler._last_lr[-1]}')
+        print(f'epoch {epoch}: theoretical = {bounds_N_plus_2m[p+1]}, bound = {bound}, abs gap from theoretical: {np.abs(bounds_N_plus_2m[p+1] - bound)}; lr: {scheduler._last_lr[-1]}')
 
         if scheduler._last_lr[-1] < lowThrLr:
             print(f'Stoping optimization due to learning rate of {scheduler._last_lr[-1]}')
@@ -199,7 +248,7 @@ if enableTrain:
 if enableTest:
     batchSize = 6500
     device = 'cpu'
-    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=False, useCuda=False)
+    pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=(simType in {'smoothing', 's_vs_f'}), useCuda=False)
     Q_cholesky, R_cholesky = torch.tensor(np.linalg.cholesky(sysModel['Q']), dtype=torch.float, device=device), torch.tensor(np.linalg.cholesky(sysModel['R']), dtype=torch.float, device=device)
     H_transpose = torch.transpose(H, 1, 0)
     H_transpose = H_transpose.contiguous()
@@ -207,7 +256,11 @@ if enableTest:
     tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel, startAtZero=False, dp=dp)  # z: [N, batchSize, dim_z]
     tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float, device=device), torch.tensor(tilde_x, dtype=torch.float, device=device), torch.tensor(processNoises, dtype=torch.float, device=device), torch.tensor(measurementNoises, dtype=torch.float, device=device)
 
-    playerTypes = ['None', 'NoKnowledge', 'NoAccess', 'Causal', 'Genie']
+    if enableTestCausal:
+        playerTypes = ['None', 'NoKnowledge', 'NoAccess', 'Causal', 'Genie']
+    else:
+        playerTypes = ['None', 'NoKnowledge', 'NoAccess', 'Genie']
+
     for playerType in playerTypes:
         if playerType == 'None':
             # estimator init values:
@@ -218,15 +271,20 @@ if enableTest:
 
             # kalman filter on z:
             z = tilde_z
-            tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+            tilde_x_est_f, tilde_x_est_s = pytorchEstimator(z, filterStateInit)
+
             tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
             e_R_0_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_minus1_est_f = tilde_x_est_f
+
+            tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
+            e_R_0_k_given_N_minus_1 = tilde_e_k_given_N_minus_1
+            x_minus1_est_s = tilde_x_est_s
             continue
 
         if playerType == 'NoKnowledge':
             u_0 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
-            u_0 = noKnowledgePlayer(u_0)
+            u_0 = noKnowledgePlayer(u_0, s_vs_f_gamma)
 
             # estimator init values:
             filterStateInit = np.matmul(np.linalg.cholesky(filter_P_init), np.random.randn(batchSize, dim_x, 1))
@@ -236,10 +294,14 @@ if enableTest:
 
             # Kalman filters:
             z = tilde_z + torch.matmul(H_transpose, u_0)
-            tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+            tilde_x_est_f, tilde_x_est_s = pytorchEstimator(z, filterStateInit)
+
             tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
-            #e_R_0_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_0_est_f = tilde_x_est_f
+
+            tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
+            x_0_est_s = tilde_x_est_s
+
             continue
 
         playerFileName = fileName + '_' + playerType + '.pt'
@@ -268,18 +330,28 @@ if enableTest:
 
         # kalman filter on z:
         z = tilde_z + torch.matmul(H_transpose, u_N)
-        tilde_x_est_f, _ = pytorchEstimator(z, filterStateInit)
+        tilde_x_est_f, tilde_x_est_s = pytorchEstimator(z, filterStateInit)
         tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
+        tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
 
         if playerType == "NoAccess":
             e_R_1_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_1_est_f = tilde_x_est_f
+
+            e_R_1_k_given_N_minus_1 = tilde_e_k_given_N_minus_1
+            x_1_est_s = tilde_x_est_s
         elif playerType == "Causal":
             e_R_2_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_2_est_f = tilde_x_est_f
+
+            e_R_2_k_given_N_minus_1 = tilde_e_k_given_N_minus_1
+            x_2_est_s = tilde_x_est_s
         elif playerType == "Genie":
             e_R_3_k_given_k_minus_1 = tilde_e_k_given_k_minus_1
             x_3_est_f = tilde_x_est_f
+
+            e_R_3_k_given_N_minus_1 = tilde_e_k_given_N_minus_1
+            x_3_est_s = tilde_x_est_s
 
 
     plt.figure(figsize=(6,6.2))
@@ -311,8 +383,9 @@ if enableTest:
     caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
     caligraphE_F_1_mean = np.mean(caligraphE_F_1, axis=1)  # watt
 
-    caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
-    caligraphE_F_2_mean = np.mean(caligraphE_F_2, axis=1)  # watt
+    if enableTestCausal:
+        caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
+        caligraphE_F_2_mean = np.mean(caligraphE_F_2, axis=1)  # watt
 
     caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
     caligraphE_F_3_mean = np.mean(caligraphE_F_3, axis=1)  # watt
@@ -327,8 +400,8 @@ if enableTest:
         trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'$B^{(1)}_{100}$')
     # label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
-    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown',
-             label=r'$f_n(2)$')
+    if enableTestCausal:
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown', label=r'$f_n(2)$')
     # label=r'empirical ${\cal E}^{(2)}_{F,k}$')
     plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange',
              label=r'$f_n(3)$')
@@ -342,7 +415,11 @@ if enableTest:
     plt.grid()
     plt.show()
 
-    noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, stdList = computeBounds(tilde_x, x_minus1_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
+    if enableTestCausal:
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, stdList = computeBounds(tilde_x, x_minus1_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
+    else:
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, stdList = computeBounds(tilde_x, x_minus1_est_f, x_0_est_f, x_1_est_f, x_1_est_f, x_3_est_f)
+
     bounds = (noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound)
     noPlayerBoundStd, noKnowledgePlayerBoundStd, noAccessPlayerBoundStd, causlaPlayerBoundStd, geniePlayerBoundStd = stdList
 
@@ -350,7 +427,7 @@ if enableTest:
     print(f'no player bound is {watt2dbm(bounds[0])} dbm')
     print(f'no knowledge bound is {watt2dbm(bounds[1])} dbm; std {watt2dbm(stdList[1])} dbm; {watt2dbm(bounds[1]) - watt2dbm(bounds[0])} db mean increase in error; {watt2dbm(bounds[1]+(stdList[1]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[1]-(stdList[1]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
     print(f'no access bound is {watt2dbm(bounds[2])} dbm; std {watt2dbm(stdList[2])} dbm; {watt2dbm(bounds[2]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[2]+(stdList[2]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[2]-(stdList[2]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
-    print(f'causal bound is {watt2dbm(bounds[3])} dbm; std {watt2dbm(stdList[3])} dbm; {watt2dbm(bounds[3]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[3]+(stdList[3]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[3]-(stdList[3]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
+    if enableTestCausal: print(f'causal bound is {watt2dbm(bounds[3])} dbm; std {watt2dbm(stdList[3])} dbm; {watt2dbm(bounds[3]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[3]+(stdList[3]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[3]-(stdList[3]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
     print(f'genie bound is {watt2dbm(bounds[4])} dbm; std {watt2dbm(stdList[4])} dbm; {watt2dbm(bounds[4]) - watt2dbm(bounds[0])} db increase in error; {watt2dbm(bounds[4]+(stdList[4]-stdList[0])) - watt2dbm(bounds[0])}, {watt2dbm(bounds[4]-(stdList[4]-stdList[0])) - watt2dbm(bounds[0])} db mean +- std increase in error')
 
 

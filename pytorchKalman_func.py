@@ -172,6 +172,7 @@ class Pytorch_filter_smoother_Obj(nn.Module):
         '''
         # stuff to cuda:
         if self.useCuda:
+            self.F = torch.tensor(F, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.tildeF_transpose = torch.tensor(tildeF.transpose(), dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.K = torch.tensor(K, dtype=torch.float, requires_grad=False).contiguous().cuda()
@@ -186,6 +187,7 @@ class Pytorch_filter_smoother_Obj(nn.Module):
             self.Ka_0 = torch.tensor(Ka_0, dtype=torch.float, requires_grad=False).contiguous().cuda()
             self.normalizedNoKnowledgePlayerContribution = torch.tensor(normalizedNoKnowledgePlayerContribution, dtype=torch.float, requires_grad=False).contiguous().cuda()
         else:
+            self.F = torch.tensor(F, dtype=torch.float, requires_grad=False).contiguous()
             self.tildeF = torch.tensor(tildeF, dtype=torch.float, requires_grad=False).contiguous()
             self.tildeF_transpose = torch.tensor(tildeF.transpose(), dtype=torch.float, requires_grad=False).contiguous()
             self.K = torch.tensor(K, dtype=torch.float, requires_grad=False).contiguous()
@@ -321,11 +323,11 @@ def calcTimeSeriesMeanEnergyRunningAvg(x):
     cumsum_square_norm_x = torch.cumsum(square_norm_x, dim=0)
     return torch.div(cumsum_square_norm_x, torch.cumsum(torch.ones_like(cumsum_square_norm_x), dim=0))
 
-def noKnowledgePlayer(u):
+def noKnowledgePlayer(u, gamma):
     dim_x = u.shape[2]
-    sigma_u_square = torch.tensor(1 / dim_x, dtype=torch.float)
+    sigma_u_square = torch.tensor(gamma / dim_x, dtype=torch.float)
     u = torch.mul(torch.sqrt(sigma_u_square), torch.randn_like(u))
-    u = torch.div(u, torch.sqrt(calcTimeSeriesMeanEnergy(u).mean()))
+    #u = torch.div(u, torch.sqrt(calcTimeSeriesMeanEnergy(u).mean()))
     return u
 
 def causalPlayer(adversarialPlayersToolbox, u, processNoises, systemInitState):
@@ -360,7 +362,7 @@ def causalPlayer(adversarialPlayersToolbox, u, processNoises, systemInitState):
 
         alpha = N - powerUsedSoFar
 
-        iter_u_N_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_j_N_tupple, tilde_b=tildeb_j_N, alpha=alpha)
+        iter_u_N_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_j_N_tupple, tilde_b=tildeb_j_N, alpha=alpha, simType='filtering')
         iter_u = iter_u_N_blockVec.reshape(batchSize, N-j, dim_x, 1).permute(1, 0, 2, 3)
         u[j] = iter_u[0]
 
@@ -371,30 +373,56 @@ def causalPlayer(adversarialPlayersToolbox, u, processNoises, systemInitState):
 
     return u
 
-def geniePlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1, energyFactor=1):
+def geniePlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1, tilde_e_k_given_N_minus_1, gamma, simType, energyFactor=1):
     use_cuda = adversarialPlayersToolbox.use_cuda
     N, batchSize, dim_x = u.shape[0], u.shape[1], u.shape[2]
 
     print(f'adversarial genie player begins')
-    blockVec_tilde_e_full = tilde_e_k_given_k_minus_1.permute(1, 0, 2, 3).reshape(batchSize, N * dim_x, 1)
 
+    blockVec_tilde_e_full = tilde_e_k_given_k_minus_1.permute(1, 0, 2, 3).reshape(batchSize, N * dim_x, 1)
     Xi_N = adversarialPlayersToolbox.compute_Xi_l_N(0, N)
     bar_Xi_N = adversarialPlayersToolbox.compute_bar_Xi_N(N)
-    # note that J_0_N = Xi_N
-    J_0_N = (Xi_N, 0, N)
-    if use_cuda:
-        tilde_b = - torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full).coda()
-        alpha = energyFactor * N * torch.ones(batchSize, dtype=torch.float).cuda()
-    else:
-        tilde_b = - torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full)
-        alpha = energyFactor * N * torch.ones(batchSize, dtype=torch.float)
 
-    u_N_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_0_N, tilde_b=tilde_b, alpha=alpha)
+    blockVec_tilde_e_s_full = tilde_e_k_given_N_minus_1.permute(1, 0, 2, 3).reshape(batchSize, N * dim_x, 1)
+    Xi_s_N = adversarialPlayersToolbox.compute_Xi_s_N(N)
+    bar_Xi_s_N = adversarialPlayersToolbox.compute_bar_Xi_s_N(N)
+
+    if use_cuda:
+        alpha = gamma * energyFactor * N * torch.ones(batchSize, dtype=torch.float).cuda()
+    else:
+        alpha = gamma * energyFactor * N * torch.ones(batchSize, dtype=torch.float)
+
+    if simType in {'filtering'}:
+        # note that J_0_N = Xi_N
+        J_0_N  = (Xi_N, 0, N)
+
+        if use_cuda:
+            tilde_b = - torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full).coda()
+        else:
+            tilde_b = - torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full)
+
+    elif simType in {'smoothing'}:
+        J_0_N = (Xi_s_N, 0, N)
+
+        if use_cuda:
+            tilde_b = - torch.matmul(torch.transpose(bar_Xi_s_N, 1, 0), blockVec_tilde_e_s_full).coda()
+        else:
+            tilde_b = - torch.matmul(torch.transpose(bar_Xi_s_N, 1, 0), blockVec_tilde_e_s_full)
+
+    elif simType in {'s_vs_f'}:
+        J_0_N = (Xi_s_N - Xi_N, 0, N)
+
+        if use_cuda:
+            tilde_b = torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full).coda() - torch.matmul(torch.transpose(bar_Xi_s_N, 1, 0), blockVec_tilde_e_s_full).coda()
+        else:
+            tilde_b = torch.matmul(torch.transpose(bar_Xi_N, 1, 0), blockVec_tilde_e_full) - torch.matmul(torch.transpose(bar_Xi_s_N, 1, 0), blockVec_tilde_e_s_full)
+
+    u_N_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_0_N, tilde_b=tilde_b, alpha=alpha, simType=simType)
     u[:N] = u_N_blockVec.reshape(batchSize, N, dim_x, 1).permute(1, 0, 2, 3)
 
     return u
 
-def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
+def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1, tilde_e_k_given_N_minus_1, gamma, simType):
     # tilde_e_k_given_k_minus_1 should be used only for the window size calculation
     use_cuda = adversarialPlayersToolbox.use_cuda
     N, batchSize, dim_x = u.shape[0], u.shape[1], u.shape[2]
@@ -413,21 +441,31 @@ def noAccessPlayer(adversarialPlayersToolbox, u, tilde_e_k_given_k_minus_1):
     for Ni in range(startWindowLength,N+1):
         print(f'adversarial no access player {Ni} out of {N}')
         blockVec_tilde_e_full = tilde_e_k_given_k_minus_1[:Ni].permute(1, 0, 2, 3).reshape(batchSize, Ni * dim_x, 1)
+        blockVec_tilde_e_s_full = tilde_e_k_given_N_minus_1[:Ni].permute(1, 0, 2, 3).reshape(batchSize, Ni * dim_x, 1)
 
         Xi_Ni = adversarialPlayersToolbox.compute_Xi_l_N(0, Ni)
-        # note that J_0_N = Xi_N
-        J_0_Ni = (Xi_Ni, 0, Ni)
+        Xi_s_Ni = adversarialPlayersToolbox.compute_Xi_s_N(Ni)
+
+
+        if simType == 'filtering':
+            # note that J_0_N = Xi_N
+            J_0_Ni = (Xi_Ni, 0, Ni)
+        elif simType == 'smoothing':
+            J_0_Ni = (Xi_s_Ni, 0, Ni)
+        elif simType == 's_vs_f':
+            J_0_Ni = (-(Xi_Ni - Xi_s_Ni), 0, Ni)
+
         if use_cuda:
             tilde_b = torch.zeros(batchSize, Ni, 1, dtype=torch.float).cuda()
-            alpha = Ni * torch.ones(batchSize, dtype=torch.float).cuda()
+            alpha = gamma * Ni * torch.ones(batchSize, dtype=torch.float).cuda()
         else:
             tilde_b = torch.zeros(batchSize, Ni, 1, dtype=torch.float)
-            alpha = Ni * torch.ones(batchSize, dtype=torch.float)
+            alpha = gamma * Ni * torch.ones(batchSize, dtype=torch.float)
 
-        u_Ni_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_0_Ni, tilde_b=tilde_b, alpha=alpha)
-        caligraphE_Ni[:, Ni-1:Ni], _, _, _ = adversarialPlayersToolbox.compute_caligraphE(u_Ni_blockVec, blockVec_tilde_e_full)
+        u_Ni_blockVec, _ = adversarialPlayersToolbox.corollary_4_opt(J_j_N=J_0_Ni, tilde_b=tilde_b, alpha=alpha, simType=simType)
+        caligraphE_Ni[:, Ni-1:Ni], _, _, _ = adversarialPlayersToolbox.compute_caligraphE(u_Ni_blockVec, blockVec_tilde_e_full, blockVec_tilde_e_s_full, simType)
+        u[:N] = u_Ni_blockVec.reshape(batchSize, N, dim_x, 1).permute(1, 0, 2, 3)
 
-    u[:N] = u_Ni_blockVec.reshape(batchSize, N, dim_x, 1).permute(1, 0, 2, 3)
     if enableCalculateForAllWindows:
         plt.figure()
         plt.plot(np.arange(1, N+1), watt2dbm(caligraphE_Ni.cpu().numpy()[0, :, 0]), label=r'empirical ${\cal E}^{(1)}_{F,N}$')
@@ -453,6 +491,9 @@ class playersToolbox:
 
         self.K_HT = torch.matmul(self.K, torch.transpose(self.H, 1, 0))
 
+        self.inv_F_Sigma = torch.linalg.inv(torch.matmul(pytorchEstimator.F, self.theoreticalBarSigma))
+        self.D_int = torch.matmul(self.inv_F_Sigma, self.K_HT)
+
         self.summed = torch.zeros(self.dim_x, self.dim_x, dtype=torch.float)
 
         self.compute_Xi_l_N_previous_l, self.compute_Xi_l_N_previous_N = 0, 0
@@ -466,6 +507,14 @@ class playersToolbox:
         self.compute_L_j_N_previous_j, self.compute_L_j_N_previous_N = 0, 0
         self.compute_L_N0_j_N_previous_N_0, self.compute_L_N0_j_N_previous_j, self.compute_L_N0_j_N_previous_N = 0, 0, 0
         self.compute_tildeY_j_N_previous_j, self.compute_tildeY_j_N_previous_N = 0, 0
+
+        self.compute_bar_Xi_s_N_previous_N = 0
+        self.compute_tildeG_previous_N = 0
+        self.compute_tildeB_previous_N = 0
+        self.compute_tildeC_previous_N = 0
+        self.compute_Xi_s_N_previous_N = 0
+        self.compute_Xi_s_N_previous_N_eigenvalues = 0
+        self.compute_Xi_s_N_minus_Xi_N_previous_N_eigenvalues = 0
 
         if self.use_cuda:
             self.K_HT.cuda()
@@ -588,6 +637,107 @@ class playersToolbox:
                     self.bar_Xi_N[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(torch.matrix_power(self.tildeF, r - 1 - c), self.K_HT)
 
         return self.bar_Xi_N
+
+    def compute_Xi_s_N(self, N):
+        if not(N == self.compute_Xi_s_N_previous_N):
+            self.compute_Xi_s_N_previous_N = N
+            self.Xi_s_N = torch.matmul(torch.transpose(self.compute_bar_Xi_s_N(N), 1, 0), self.compute_bar_Xi_s_N(N))
+        return self.Xi_s_N
+
+    def compute_Xi_s_N_eigenvalues(self, N):
+        if not(N == self.compute_Xi_s_N_previous_N_eigenvalues):
+            self.compute_Xi_s_N_previous_N_eigenvalues = N
+            self.Xi_s_N_eig = torch.symeig(self.compute_Xi_s_N(N), eigenvectors=True)
+        return self.Xi_s_N_eig
+
+    def compute_Xi_s_N_minus_Xi_N_eigenvalues(self, N):
+        if not(N == self.compute_Xi_s_N_minus_Xi_N_previous_N_eigenvalues):
+            self.compute_Xi_s_N_minus_Xi_N_previous_N_eigenvalues = N
+            self.Xi_s_N_minus_Xi_N_eig = torch.symeig(self.compute_Xi_s_N(N) - self.compute_Xi_l_N(0, N), eigenvectors=True)
+        return self.Xi_s_N_minus_Xi_N_eig
+
+    def compute_bar_Xi_s_N(self, N):
+        if not(N == self.compute_bar_Xi_s_N_previous_N):
+            self.compute_bar_Xi_s_N_previous_N = N
+            self.bar_Xi_s_N = torch.zeros(N * self.dim_x, N * self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.bar_Xi_s_N.cuda()
+
+            self.compute_tildeG(N)
+
+            for r in range(N):
+                for c in range(N):
+                    tildeG_r_c = self.tildeG[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)]
+                    self.bar_Xi_s_N[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(tildeG_r_c, self.K_HT)
+
+        return self.bar_Xi_s_N
+
+    def compute_tildeG(self, N):
+        if not (N == self.compute_tildeG_previous_N):
+            self.compute_tildeG_previous_N = N
+            self.tildeG = torch.zeros(N * self.dim_x, N * self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.tildeG.cuda()
+
+            self.compute_tildeB(N)
+            self.compute_tildeC(N)
+
+            for r in range(N):
+                for c in range(N):
+                    if c < r:
+                        tildeB_r_c = self.tildeB[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)]
+                        self.tildeG[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = tildeB_r_c
+                    else:
+                        tildeC_r_c = self.tildeC[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)]
+                        self.tildeG[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = tildeC_r_c
+
+        return self.tildeG
+
+    def compute_tildeB(self, N):
+        if not (N == self.compute_tildeB_previous_N):
+            self.compute_tildeB_previous_N = N
+            self.tildeB = torch.zeros(N * self.dim_x, N * self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.tildeB.cuda()
+
+            for r in range(N):
+                for c in range(r):
+                    self.tildeB[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matrix_power(self.tildeF, r - c - 1) - torch.matmul(self.theoreticalBarSigma, self.compute_tildeD_r_c_m(N, r, c, r))
+
+        return self.tildeB
+
+    def compute_tildeC(self, N):
+        if not (N == self.compute_tildeC_previous_N):
+            self.compute_tildeC_previous_N = N
+            self.tildeC = torch.zeros(N * self.dim_x, N * self.dim_x, dtype=torch.float)
+            if self.use_cuda: self.tildeC.cuda()
+
+            for r in range(N):
+                for c in range(r, N):
+                    tildeF_pow_c_minus_r = torch.matrix_power(self.tildeF, c - r)
+                    self.tildeC[self.dim_x * r:self.dim_x * (r + 1), self.dim_x * c:self.dim_x * (c + 1)] = torch.matmul(self.theoreticalBarSigma, torch.matmul(torch.transpose(tildeF_pow_c_minus_r, 1, 0), self.inv_F_Sigma) - self.compute_tildeD_r_c_m(N, r, c, c+1))
+
+        return self.tildeC
+
+    def compute_tildeD_r_c_m(self, N, k, i, m):
+        thr = 1e-20 * torch.abs(self.tildeF).max()
+        E_summed_m_to_inf = torch.zeros(self.dim_x, self.dim_x, dtype=torch.float)
+        n = m - 1
+        while True:
+            n += 1
+            if n > N - 1:
+                break
+            tmp = self.compute_tildeE(k, i, n)
+            E_summed_m_to_inf = E_summed_m_to_inf + tmp
+            if torch.abs(tmp).max() < thr:
+                break
+
+        return E_summed_m_to_inf
+
+    def compute_tildeE(self, k, i, n):
+        tildeF_pow_n_minus_k = torch.transpose(torch.matrix_power(self.tildeF, n - k), 1, 0)
+        tildeF_pow_n_minus_i_minus_1 = torch.matrix_power(self.tildeF, n - i - 1)
+        tildeE = torch.matmul(torch.transpose(tildeF_pow_n_minus_k, 1, 0), torch.matmul(self.D_int, tildeF_pow_n_minus_i_minus_1))
+
+        return tildeE
+
 
     def compute_bar_Xi_N_bar_Xi_N_transpose(self, N):
         if not(N == self.compute_bar_Xi_N_bar_Xi_N_transpose_previous):
@@ -954,15 +1104,22 @@ class playersToolbox:
         key = 'j == ' + str(j) + '; N == ' + str(N)
         if key not in self.compute_J_j_N_eig_dict:
             print('calculating eigenvalues for J_j_N: ' + key)
-            self.compute_J_j_N_eig_dict[key] =  torch.symeig(self.compute_J_j_N(j, N), eigenvectors=True)
+            self.compute_J_j_N_eig_dict[key] = torch.symeig(self.compute_J_j_N(j, N), eigenvectors=True)
         self.J_j_N_eig = self.compute_J_j_N_eig_dict[key]
         return self.J_j_N_eig
 
 
-    def corollary_4_opt(self, J_j_N, tilde_b, alpha):
+    def corollary_4_opt(self, J_j_N, tilde_b, alpha, simType):
         batchSize, N = alpha.shape[0], J_j_N[0].shape[0]
         b = -tilde_b
-        J_j_N_eig = self.compute_J_j_N_eigenvalues(J_j_N[1], J_j_N[2])
+
+        if simType in {'filtering'}:
+            J_j_N_eig = self.compute_J_j_N_eigenvalues(J_j_N[1], J_j_N[2])
+        elif simType in {'smoothing'}:
+            J_j_N_eig = self.compute_Xi_s_N_eigenvalues(int(N/self.dim_x))
+        elif simType in {'s_vs_f'}:
+            J_j_N_eig = self.compute_Xi_s_N_minus_Xi_N_eigenvalues(int(N / self.dim_x))
+
 
         if self.use_cuda:
             x = torch.zeros(N, 1, dtype=torch.float).cuda()
@@ -1032,10 +1189,17 @@ class playersToolbox:
                 lambda_star_numpy[batchIdx], optimalVal_numpy[batchIdx] = lambdaVar.value, prob.value
         else:
             lambdaBatchVar = cp.Variable((batchSize,1))
-            constraintsBatch = [lambdaBatchVar >= -lambda_min_A + 1e-10]
+            constraintsBatch = [lambdaBatchVar >= torch.max(-lambda_min_A + 1e-10, 0)[0]]
             objectiveBatch = cp.Minimize(cp.sum(cp.sum(cp.multiply(square_eigenvectors_A_dot_b, (lambdaBatchVar + eigenvalues_A[None,:].repeat(batchSize,1))**(-1)), axis=1, keepdims=True) + lambdaBatchVar))
             probBatch = cp.Problem(objectiveBatch, constraintsBatch)
-            probBatch.solve()
+
+            #probBatch.solve()
+
+            try:
+                probBatch.solve()
+            except SolverError:
+                probBatch.solve(solver='SCS')
+
             lambda_star_numpy, optimalVal_numpy = lambdaBatchVar.value, probBatch.value
 
         if self.use_cuda:
@@ -1070,19 +1234,32 @@ class playersToolbox:
 
         return lambda_star
 
-    def compute_caligraphE(self, u_N, tilde_e_N):
+    def compute_caligraphE(self, u_N, tilde_e_N, tilde_e_s_N, simType):
         N = int(u_N.shape[1]/self.dim_x)
         Xi_N, bar_Xi_N = self.compute_Xi_l_N(0, N), self.compute_bar_Xi_N(N)
-        quadraticPart = torch.matmul(torch.transpose(u_N, 1, 2), torch.matmul(Xi_N, u_N))
-        linearPart = 2*torch.matmul(torch.transpose(tilde_e_N, 1, 2), torch.matmul(bar_Xi_N, u_N))
-        noPlayerPart = torch.matmul(torch.transpose(tilde_e_N, 1, 2), tilde_e_N)
+        Xi_s_N, bar_Xi_s_N = self.compute_Xi_s_N(N), self.compute_bar_Xi_s_N(N)
+
+        if simType == 'filtering':
+            quadraticPart = torch.matmul(torch.transpose(u_N, 1, 2), torch.matmul(Xi_N, u_N))
+            linearPart = 2 * torch.matmul(torch.transpose(tilde_e_N, 1, 2), torch.matmul(bar_Xi_N, u_N))
+            noPlayerPart = torch.matmul(torch.transpose(tilde_e_N, 1, 2), tilde_e_N)
+        elif simType == 'smoothing':
+            quadraticPart = torch.matmul(torch.transpose(u_N, 1, 2), torch.matmul(Xi_s_N, u_N))
+            linearPart = 2 * torch.matmul(torch.transpose(tilde_e_s_N, 1, 2), torch.matmul(bar_Xi_s_N, u_N))
+            noPlayerPart = torch.matmul(torch.transpose(tilde_e_s_N, 1, 2), tilde_e_s_N)
+        elif simType == 's_vs_f':
+            quadraticPart = torch.matmul(torch.transpose(u_N, 1, 2), torch.matmul(Xi_N, u_N)) - torch.matmul(torch.transpose(u_N, 1, 2), torch.matmul(Xi_s_N, u_N))
+            linearPart = 2 * torch.matmul(torch.transpose(tilde_e_N, 1, 2), torch.matmul(bar_Xi_N, u_N)) - 2 * torch.matmul(torch.transpose(tilde_e_s_N, 1, 2), torch.matmul(bar_Xi_s_N, u_N))
+            noPlayerPart = torch.matmul(torch.transpose(tilde_e_N, 1, 2), tilde_e_N) - torch.matmul(torch.transpose(tilde_e_s_N, 1, 2), tilde_e_s_N)
+
+
         return torch.div(noPlayerPart + quadraticPart + linearPart, N), torch.div(linearPart, N), torch.div(noPlayerPart, N), torch.div(quadraticPart, N)
 
-def adversarialPlayerPlotting(fileName):
+def adversarialPlayerPlotting(fileName, simType):
     savedList = pickle.load(open(fileName, "rb"))
     sysModel, \
     dim_x, N, \
-    caligraphE_F_minus_1_b, caligraphE_F_minus_1_mean, caligraphE_F_0_b, caligraphE_F_1_b, caligraphE_F_2_b, caligraphE_F_3_b, caligraphE_F_0_mean, caligraphE_F_1_mean, caligraphE_F_2_mean, caligraphE_F_3_mean, \
+    caligraphE_minus_1_b, caligraphE_minus_1_mean, caligraphE_0_b, caligraphE_1_b, caligraphE_2_b, caligraphE_3_b, caligraphE_0_mean, caligraphE_1_mean, caligraphE_2_mean, caligraphE_3_mean, \
     theoreticalBarSigma, normalizedNoKnowledgePlayerContribution, theoretical_lambda_Xi_N_max, lambda_bar_Xi_N_bar_Xi_N_transpose_Xi_max, bounds = savedList
     #tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit, u_0, u_1, u_2, u_3, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f, \
 
@@ -1106,7 +1283,7 @@ def adversarialPlayerPlotting(fileName):
         caligraphE_directCalc, caligraphE_directCalc_linearPart, caligraphE_directCalc_noPlayerPart, caligraphE_directCalc_quadraticPart = adversarialPlayersToolbox.compute_caligraphE(u_0_blockVec, blockVec_tilde_e_full)
         caligraphE_directCalc, caligraphE_directCalc_linearPart, caligraphE_directCalc_noPlayerPart, caligraphE_directCalc_quadraticPart = caligraphE_directCalc.mean().cpu().numpy(), caligraphE_directCalc_linearPart.mean().cpu().numpy(), caligraphE_directCalc_noPlayerPart.mean().cpu().numpy(), caligraphE_directCalc_quadraticPart.mean().cpu().numpy()
         print(f'No knowledge player empiric pure part w.r.t theoretic pure: {watt2db(caligraphE_directCalc_noPlayerPart / trace_bar_Sigma)} db')
-        print(f'No knowledge player empiric quadratic part w.r.t theoretic quadratic part: {watt2db(caligraphE_directCalc_quadraticPart / theoretical_caligraphE_F_0_quadraticPart)} db')
+        print(f'No knowledge player empiric quadratic part w.r.t theoretic quadratic part: {watt2db(caligraphE_directCalc_quadraticPart / theoretical_caligraphE_0_quadraticPart)} db')
         print(f'No knowledge player empiric performance from block vectors: {watt2dbm(caligraphE_directCalc)} dbm')
         print(f'No knowledge player empiric performance linear part: {watt2dbm(caligraphE_directCalc_linearPart)} dbm')
         print(f'No knowledge player empiric performance quadratic part: {watt2dbm(caligraphE_directCalc_quadraticPart)} dbm')
@@ -1120,16 +1297,16 @@ def adversarialPlayerPlotting(fileName):
     enableStdVsMean = False
     if enableStdVsMean:
         print(
-            f'pure kalman performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_minus_1[-1])) - watt2dbm(np.mean(caligraphE_F_minus_1[-1]))} db')
+            f'pure kalman performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_minus_1[-1])) - watt2dbm(np.mean(caligraphE_minus_1[-1]))} db')
         print(
-            f'no knowledge player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_0[-1])) - watt2dbm(np.mean(caligraphE_F_0[-1]))} db')
+            f'no knowledge player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_0[-1])) - watt2dbm(np.mean(caligraphE_0[-1]))} db')
         if enableSmartPlayers:
             print(
-                f'no access player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_1[-1])) - watt2dbm(np.mean(caligraphE_F_1[-1]))} db')
+                f'no access player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_1[-1])) - watt2dbm(np.mean(caligraphE_1[-1]))} db')
             print(
-                f'causal player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_2[-1])) - watt2dbm(np.mean(caligraphE_F_2[-1]))} db')
+                f'causal player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_2[-1])) - watt2dbm(np.mean(caligraphE_2[-1]))} db')
             print(
-                f'genie player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_F_3[-1])) - watt2dbm(np.mean(caligraphE_F_3[-1]))} db')
+                f'genie player performance std w.r.t. mean: {watt2dbm(np.std(caligraphE_3[-1])) - watt2dbm(np.mean(caligraphE_3[-1]))} db')
 
     caligraphE_tVec = np.arange(0, N, 1)
 
@@ -1137,31 +1314,62 @@ def adversarialPlayerPlotting(fileName):
     plt.subplot(2, 2, 1)
     plt.title('Absolute performance of players, specific game')
 
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)), 'k--',
-             label=r'naive upper bound')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)), 'k--', label=r'naive filtering upper bound')
 
-    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_minus_1_b), 'g', label=r'empirical ${\cal E}^{(-1)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'g--',
-             label=r'theoretical $\operatorname{tr}\{\bar{\Sigma}\}$')
+    if simType == 'filtering':
+        label = r'empirical ${\cal E}^{(-1)}_{F,k}$'
+    elif simType == 'smoothing':
+        label = r'empirical ${\cal E}^{(-1)}_{S,k}$'
+    elif simType == 's_vs_f':
+        label = r'empirical ${\cal E}^{(-1)}_{SF,k}$'
+
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_minus_1_b), 'g', label=label)#r'empirical ${\cal E}^{(-1)}_{F,k}$')
+    plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'g--', label=r'theoretical $\operatorname{tr}\{\bar{\Sigma}\}$')
 
     # plt.plot(caligraphE_tVec, watt2dbm(caligraphE_S_minus_1_b), label = r'empirical ${\cal E}^{(-1)}_{S,k}$')
     # plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma_S * np.ones_like(caligraphE_S_minus_1_b)), '--', label = r'theoretical $\operatorname{tr}\{\bar{\Sigma}^S\}$')
 
-    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_b), 'b', label=r'empirical ${\cal E}^{(0)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)), 'b--',
-             label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+    if simType == 'filtering':
+        label = r'empirical ${\cal E}^{(0)}_{F,k}$'
+    elif simType == 'smoothing':
+        label = r'empirical ${\cal E}^{(0)}_{S,k}$'
+    elif simType == 's_vs_f':
+        label = r'empirical ${\cal E}^{(0)}_{SF,k}$'
+
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_0_b), 'b', label=label)
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)), 'b--', label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
     if enableSmartPlayers:
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_b), 'r', label=r'empirical ${\cal E}^{(1)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)), 'r--',
-                 label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(1)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(1)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(1)}_{SF,k}$'
 
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_b), color='brown', label=r'empirical ${\cal E}^{(2)}_{F,k}$')
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_1_b), 'r', label=label)
+        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)), 'r--', label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_b), color='orange', label=r'empirical ${\cal E}^{(3)}_{F,k}$')
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(2)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(2)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(2)}_{SF,k}$'
 
-        # minY_absolute = np.min((watt2dbm(theoretical_upper_bound), np.min((watt2dbm(caligraphE_F_3_b), watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))))
-        # maxY_absolute = np.max((watt2dbm(theoretical_upper_bound), np.max((watt2dbm(caligraphE_F_3_b), watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b), watt2dbm(caligraphE_F_1_b)))))
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_2_b), color='brown', label=label)
+
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(3)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(3)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(3)}_{SF,k}$'
+
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_3_b), color='orange', label=label)
+
+        # minY_absolute = np.min((watt2dbm(theoretical_upper_bound), np.min((watt2dbm(caligraphE_3_b), watt2dbm(caligraphE_minus_1_b), watt2dbm(caligraphE_0_b), watt2dbm(caligraphE_1_b)))))
+        # maxY_absolute = np.max((watt2dbm(theoretical_upper_bound), np.max((watt2dbm(caligraphE_3_b), watt2dbm(caligraphE_minus_1_b), watt2dbm(caligraphE_0_b), watt2dbm(caligraphE_1_b)))))
 
     marginAbsolute = 1  # db
     # if enableSmartPlayers: plt.ylim([minY_absolute - marginAbsolute, maxY_absolute + marginAbsolute]
@@ -1175,27 +1383,53 @@ def adversarialPlayerPlotting(fileName):
     plt.title('Players performance w.r.t pure filter, specific game')
 
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(
-        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'theoretical upper bound')
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'naive filtering upper bound')
 
-    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), 'b',
-             label=r'empirical ${\cal E}^{(0)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(
-        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--',
-             label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+    if simType == 'filtering':
+        label = r'empirical ${\cal E}^{(0)}_{F,k}$'
+    elif simType == 'smoothing':
+        label = r'empirical ${\cal E}^{(0)}_{S,k}$'
+    elif simType == 's_vs_f':
+        label = r'empirical ${\cal E}^{(0)}_{SF,k}$'
+
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_0_b) - watt2dbm(caligraphE_minus_1_b), 'b', label=label)
+
+    label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$'
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--', label=label)
 
     if enableSmartPlayers:
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b), 'r',
-                 label=r'empirical ${\cal E}^{(1)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(
-            trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(1)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(1)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(1)}_{SF,k}$'
 
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_b) - watt2dbm(caligraphE_F_minus_1_b), color='brown',
-                 label=r'empirical ${\cal E}^{(2)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_b) - watt2dbm(caligraphE_F_minus_1_b), color='orange',
-                 label=r'empirical ${\cal E}^{(3)}_{F,k}$')
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_1_b) - watt2dbm(caligraphE_minus_1_b), 'r', label=label)
 
-        # minY_relative = np.min((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_3_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
-        # maxY_relative = np.max((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_3_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_0_b) - watt2dbm(caligraphE_F_minus_1_b), watt2dbm(caligraphE_F_1_b) - watt2dbm(caligraphE_F_minus_1_b)))
+        label = r'theoretical ${\cal E}^{(1)}_{F,k}$'
+        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=label)
+
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(2)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(2)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(2)}_{SF,k}$'
+            
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_2_b) - watt2dbm(caligraphE_minus_1_b), color='brown', label=label)
+
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(3)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(3)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(3)}_{SF,k}$'
+            
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_3_b) - watt2dbm(caligraphE_minus_1_b), color='orange', label=label)
+
+        # minY_relative = np.min((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_minus_1_b), watt2dbm(caligraphE_3_b) - watt2dbm(caligraphE_minus_1_b), watt2dbm(caligraphE_0_b) - watt2dbm(caligraphE_minus_1_b), watt2dbm(caligraphE_1_b) - watt2dbm(caligraphE_minus_1_b)))
+        # maxY_relative = np.max((watt2dbm(theoretical_upper_bound) - watt2dbm(caligraphE_minus_1_b), watt2dbm(caligraphE_3_b) - watt2dbm(caligraphE_minus_1_b), watt2dbm(caligraphE_0_b) - watt2dbm(caligraphE_minus_1_b), watt2dbm(caligraphE_1_b) - watt2dbm(caligraphE_minus_1_b)))
 
     marginRelative = 5
     # plt.legend()
@@ -1207,26 +1441,60 @@ def adversarialPlayerPlotting(fileName):
     plt.subplot(2, 2, 2)
     plt.title('Absolute mean performance of players')
 
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)), 'k--',
-             label=r'theoretical upper bound')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)), 'k--', label=r'theoretical upper bound')
 
-    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_minus_1_mean), 'g', label=r'empirical ${\cal E}^{(-1)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'g--',
-             label=r'theoretical $\operatorname{tr}\{\bar{\Sigma}\}$')
+    if simType == 'filtering':
+        label = r'empirical ${\cal E}^{(-1)}_{F,k}$'
+    elif simType == 'smoothing':
+        label = r'empirical ${\cal E}^{(-1)}_{S,k}$'
+    elif simType == 's_vs_f':
+        label = r'empirical ${\cal E}^{(-1)}_{SF,k}$'
 
-    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean), 'b', label=r'empirical ${\cal E}^{(0)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)), 'b--',
-             label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_minus_1_mean), 'g', label=label)
+    plt.plot(caligraphE_tVec, watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'g--', label=r'theoretical $\operatorname{tr}\{\bar{\Sigma}\}$')
+
+    if simType == 'filtering':
+        label = r'empirical ${\cal E}^{(0)}_{F,k}$'
+    elif simType == 'smoothing':
+        label = r'empirical ${\cal E}^{(0)}_{S,k}$'
+    elif simType == 's_vs_f':
+        label = r'empirical ${\cal E}^{(0)}_{SF,k}$'
+
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_0_mean), 'b', label=label)
+
+    label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$'
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)), 'b--', label=label)
 
     if enableSmartPlayers:
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean), 'r', label=r'empirical ${\cal E}^{(1)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)), 'r--',
-                 label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(1)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(1)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(1)}_{SF,k}$'
+            
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_1_mean), 'r', label=label)
 
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean), color='brown',
-                 label=r'empirical ${\cal E}^{(2)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean), color='orange',
-                 label=r'empirical ${\cal E}^{(3)}_{F,k}$')
+        label = r'theoretical ${\cal E}^{(1)}_{F,k}$'
+        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)), 'r--', label=label)
+
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(2)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(2)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(2)}_{SF,k}$'
+            
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_2_mean), color='brown', label=label)
+
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(3)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(3)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(3)}_{SF,k}$'
+            
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_3_mean), color='orange', label=label)
 
     # plt.legend()
     plt.ylabel('dbm')
@@ -1237,25 +1505,52 @@ def adversarialPlayerPlotting(fileName):
     plt.subplot(2, 2, 4)
     plt.title('Players mean performance w.r.t pure filter')
 
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(
-        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'theoretical upper bound')
+    plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'theoretical upper bound')
 
-    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'b',
-             label=r'empirical ${\cal E}^{(0)}_{F,k}$')
+    if simType == 'filtering':
+        label = r'empirical ${\cal E}^{(0)}_{F,k}$'
+    elif simType == 'smoothing':
+        label = r'empirical ${\cal E}^{(0)}_{S,k}$'
+    elif simType == 's_vs_f':
+        label = r'empirical ${\cal E}^{(0)}_{SF,k}$'
+        
+    plt.plot(caligraphE_tVec, watt2dbm(caligraphE_0_mean) - watt2dbm(caligraphE_minus_1_mean), 'b', label=label)
+
+    label = r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$'
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(
-        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--',
-             label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--', label=label)
 
     if enableSmartPlayers:
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'r',
-                 label=r'empirical ${\cal E}^{(1)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(
-            trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(1)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(1)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(1)}_{SF,k}$'
+            
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_1_mean) - watt2dbm(caligraphE_minus_1_mean), 'r', label=label)
 
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown',
-                 label=r'empirical ${\cal E}^{(2)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange',
-                 label=r'empirical ${\cal E}^{(3)}_{F,k}$')
+        label = r'theoretical ${\cal E}^{(1)}_{F,k}$'
+        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(
+            trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=label)
+
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(2)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(2)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(2)}_{SF,k}$'
+            
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_2_mean) - watt2dbm(caligraphE_minus_1_mean), color='brown', label=label)
+
+        if simType == 'filtering':
+            label = r'empirical ${\cal E}^{(3)}_{F,k}$'
+        elif simType == 'smoothing':
+            label = r'empirical ${\cal E}^{(3)}_{S,k}$'
+        elif simType == 's_vs_f':
+            label = r'empirical ${\cal E}^{(3)}_{SF,k}$'
+            
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_3_mean) - watt2dbm(caligraphE_minus_1_mean), color='orange', label=label)
 
     # plt.legend()
     plt.ylabel('db')
@@ -1277,26 +1572,31 @@ def adversarialPlayerPlotting(fileName):
     #plt.show()
 
     plt.figure(figsize=(6,6.2))
-    plt.title(r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid k-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{tr}\{\bar{\Sigma}\}$)')
+    if simType == 'filtering':
+        plt.title(r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid k-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{tr}\{\bar{\Sigma}\}$)')
+    elif simType == 'smoothing':
+        plt.title(r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid N-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{tr}\{\bar{\Sigma}\}$)')
+    elif simType == 's_vs_f':
+        plt.title(r'$f_n(p) = E \left[ \frac{1}{n} \sum_{k=0}^{n-1} ||e_{k \mid k-1}||_2^2 - ||e_{k \mid N-1}||_2^2 \mid p\right]$ (w.r.t $\operatorname{tr}\{\bar{\Sigma}\}$)')
 
     plt.plot(caligraphE_tVec, watt2dbm(theoretical_upper_bound * np.ones_like(caligraphE_tVec)) - watt2dbm(
-        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'naive upper bound')
+        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'k--', label=r'naive filtering upper bound')
 
-    #plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_0_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'b', label=r'empirical ${\cal E}^{(0)}_{F,k}$')
-    plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(
-        trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--',label=r'$u_k \sim {\mathcal{N}}(0,\sigma^2_u I)$')
+    #plt.plot(caligraphE_tVec, watt2dbm(caligraphE_0_mean) - watt2dbm(caligraphE_minus_1_mean), 'b', label=r'empirical ${\cal E}^{(0)}_{F,k}$')
+    if simType == 'filtering':
+        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_0 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'b--',label=r'$u_k \sim {\mathcal{N}}(0,\sigma^2_u I)$')
              #label=r'theoretical $\operatorname{E}[{\cal E}_F^{(0)}]$')
 
     if enableSmartPlayers:
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_1_mean) - watt2dbm(caligraphE_F_minus_1_mean), 'r',label=r'$f_n(1)$')
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_1_mean) - watt2dbm(caligraphE_minus_1_mean), 'r',label=r'$f_n(1)$')
                  #label=r'empirical ${\cal E}^{(1)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(
-            trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'$B^{(1)}_{100}$')
+        if simType == 'filtering':
+            plt.plot(caligraphE_tVec, watt2dbm(theoretical_caligraphE_F_1 * np.ones_like(caligraphE_tVec)) - watt2dbm(trace_bar_Sigma * np.ones_like(caligraphE_tVec)), 'r--', label=r'$B^{(1)}_{100}$')
                  #label=r'theoretical ${\cal E}^{(1)}_{F,k}$')
 
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_2_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='brown', label=r'$f_n(2)$')
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_2_mean) - watt2dbm(caligraphE_minus_1_mean), color='brown', label=r'$f_n(2)$')
                  #label=r'empirical ${\cal E}^{(2)}_{F,k}$')
-        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_F_3_mean) - watt2dbm(caligraphE_F_minus_1_mean), color='orange', label=r'$f_n(3)$')
+        plt.plot(caligraphE_tVec, watt2dbm(caligraphE_3_mean) - watt2dbm(caligraphE_minus_1_mean), color='orange', label=r'$f_n(3)$')
                  #label=r'empirical ${\cal E}^{(3)}_{F,k}$')
 
     plt.legend()
@@ -1305,37 +1605,86 @@ def adversarialPlayerPlotting(fileName):
     # if enableSmartPlayers: plt.ylim([minY_relative - marginRelative, maxY_relative + marginRelative])
     plt.grid()
 
-def computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f):
+def computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f, tilde_x_est_s, x_0_est_s, x_1_est_s, x_2_est_s, x_3_est_s, simType):
     tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
-    caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
-    noPlayerBound = caligraphE_F_minus_1[-1].mean()
-    noPlayerBoundStd = caligraphE_F_minus_1[-1].std()
+    caligraphE_minus_1_f = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
+    noPlayerBound_f = caligraphE_minus_1_f[-1].mean()
+    noPlayerBoundStd_f = caligraphE_minus_1_f[-1].std()
 
     e_R_0_k_given_k_minus_1 = tilde_x - x_0_est_f
-    caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
-    noKnowledgePlayerBound = caligraphE_F_0[-1].mean()
-    noKnowledgePlayerBoundStd = caligraphE_F_0[-1].std()
+    caligraphE_0_f = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
+    noKnowledgePlayerBound_f = caligraphE_0_f[-1].mean()
+    noKnowledgePlayerBoundStd_f = caligraphE_0_f[-1].std()
 
     e_R_1_k_given_k_minus_1 = tilde_x - x_1_est_f
-    caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
-    noAccessPlayerBound = caligraphE_F_1[-1].mean()
-    noAccessPlayerBoundStd = caligraphE_F_1[-1].std()
+    caligraphE_1_f = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
+    noAccessPlayerBound_f = caligraphE_1_f[-1].mean()
+    noAccessPlayerBoundStd_f = caligraphE_1_f[-1].std()
 
     e_R_2_k_given_k_minus_1 = tilde_x - x_2_est_f
-    caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
-    causlaPlayerBound = caligraphE_F_2[-1].mean()
-    causlaPlayerBoundStd = caligraphE_F_2[-1].std()
+    caligraphE_2_f = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
+    causlaPlayerBound_f = caligraphE_2_f[-1].mean()
+    causlaPlayerBoundStd_f = caligraphE_2_f[-1].std()
 
     e_R_3_k_given_k_minus_1 = tilde_x - x_3_est_f
-    caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
-    geniePlayerBound = caligraphE_F_3[-1].mean()
-    geniePlayerBoundStd = caligraphE_F_3[-1].std()
+    caligraphE_3_f = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
+    geniePlayerBound_f = caligraphE_3_f[-1].mean()
+    geniePlayerBoundStd_f = caligraphE_3_f[-1].std()
+    ######################################################33
+    tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
+    caligraphE_minus_1_s = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_N_minus_1).detach().cpu().numpy()
+    noPlayerBound_s = caligraphE_minus_1_s[-1].mean()
+    noPlayerBoundStd_s = caligraphE_minus_1_s[-1].std()
 
-    stdList = [noPlayerBoundStd, noKnowledgePlayerBoundStd, noAccessPlayerBoundStd, causlaPlayerBoundStd, geniePlayerBoundStd]
+    e_R_0_k_given_N_minus_1 = tilde_x - x_0_est_s
+    caligraphE_0_s = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_N_minus_1).detach().cpu().numpy()
+    noKnowledgePlayerBound_s = caligraphE_0_s[-1].mean()
+    noKnowledgePlayerBoundStd_s = caligraphE_0_s[-1].std()
+
+    e_R_1_k_given_N_minus_1 = tilde_x - x_1_est_s
+    caligraphE_1_s = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_N_minus_1).detach().cpu().numpy()
+    noAccessPlayerBound_s = caligraphE_1_s[-1].mean()
+    noAccessPlayerBoundStd_s = caligraphE_1_s[-1].std()
+
+    e_R_2_k_given_N_minus_1 = tilde_x - x_2_est_s
+    caligraphE_2_s = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_N_minus_1).detach().cpu().numpy()
+    causlaPlayerBound_s = caligraphE_2_s[-1].mean()
+    causlaPlayerBoundStd_s = caligraphE_2_s[-1].std()
+
+    e_R_3_k_given_N_minus_1 = tilde_x - x_3_est_s
+    caligraphE_3_s = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_N_minus_1).detach().cpu().numpy()
+    geniePlayerBound_s = caligraphE_3_s[-1].mean()
+    geniePlayerBoundStd_s = caligraphE_3_s[-1].std()
+
+    ##########################################333
+    noPlayerBoundStd_s_vs_f = (caligraphE_minus_1_f[-1] - caligraphE_minus_1_s[-1]).std()
+    noKnowledgePlayerBoundStd_s_vs_f = (caligraphE_0_f[-1] - caligraphE_0_s[-1]).std()
+    noAccessPlayerBoundStd_s_vs_f = (caligraphE_1_f[-1] - caligraphE_1_s[-1]).std()
+    causlaPlayerBoundStd_s_vs_f = (caligraphE_2_f[-1] - caligraphE_2_s[-1]).std()
+    geniePlayerBoundStd_s_vs_f = (caligraphE_3_f[-1] - caligraphE_3_s[-1]).std()
+
+    stdList_f = [noPlayerBoundStd_f, noKnowledgePlayerBoundStd_f, noAccessPlayerBoundStd_f, causlaPlayerBoundStd_f, geniePlayerBoundStd_f]
+    stdList_s = [noPlayerBoundStd_s, noKnowledgePlayerBoundStd_s, noAccessPlayerBoundStd_s, causlaPlayerBoundStd_s, geniePlayerBoundStd_s]
+    stdList_s_vs_f = [noPlayerBoundStd_s_vs_f, noKnowledgePlayerBoundStd_s_vs_f, noAccessPlayerBoundStd_s_vs_f, causlaPlayerBoundStd_s_vs_f, geniePlayerBoundStd_s_vs_f]
+
+    if simType == 'filtering':
+        stdList = stdList_f
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = noPlayerBound_f, noKnowledgePlayerBound_f, noAccessPlayerBound_f, causlaPlayerBound_f, geniePlayerBound_f
+    elif simType == 'smoothing':
+        stdList = stdList_s
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = noPlayerBound_s, noKnowledgePlayerBound_s, noAccessPlayerBound_s, causlaPlayerBound_s, geniePlayerBound_s
+    elif simType == 's_vs_f':
+        stdList = stdList_s_vs_f
+        noPlayerBound = noPlayerBound_f - noPlayerBound_s
+        noKnowledgePlayerBound = noKnowledgePlayerBound_f - noKnowledgePlayerBound_s
+        noAccessPlayerBound = noAccessPlayerBound_f - noAccessPlayerBound_s
+        causlaPlayerBound = causlaPlayerBound_f - causlaPlayerBound_s
+        geniePlayerBound = geniePlayerBound_f - geniePlayerBound_s
+
 
     return noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, stdList
 
-def runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, enableSmartPlayers, N, mistakeBound, delta_trS, enableCausalPlayer, fileName):
+def runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  useCuda, enableSmartPlayers, N, mistakeBound, delta_trS, enableCausalPlayer, gamma, simType, fileName):
     batchSize = 1  # to be updated later
     minBatchSize = 1000
 
@@ -1346,6 +1695,7 @@ def runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  u
     batchSizeForPerformance = np.ceil((np.round((np.sqrt(1 / mistakeBound) * adversarialPlayersToolbox.varianceBound.cpu().numpy()) / (delta_trS * trS))) / minBatchSize) * minBatchSize
     newBatchSizeForPerformance = np.ceil((np.round((np.sqrt(1 / mistakeBound) * adversarialPlayersToolbox.newVarianceBound.cpu().numpy()) / (delta_trS * trS))) / minBatchSize) * minBatchSize
     batchSize = int(np.max((batchSize, batchSizeForPerformance)))
+    #print('USING SMALL BATCH SIZE!!!!!!!!!!')
     #newBatchSize = int(np.max((batchSize, newBatchSizeForPerformance)))
     print(f'batchSize for performance is {batchSizeForPerformance}')
     print(f'newBatchSize for performance is {newBatchSizeForPerformance}')
@@ -1357,29 +1707,30 @@ def runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  u
     # therefore gamma = sqrt(1/mistakeBound)
     # and M = (gamma * boundVar) / (delta_trS * tr{Sigma}) = (sqrt(1/mistakeBound) * boundVar) / (delta_trS * tr{Sigma})
     nBatchIters = int(batchSize/minBatchSize)
+    print(f'no. of iterations = {nBatchIters}')
     for batchIter in range(nBatchIters):
-        caligraphE_F_minus_1_b, caligraphE_F_minus_1_mean_batch, \
-        caligraphE_F_0_b, caligraphE_F_1_b, caligraphE_F_2_b, caligraphE_F_3_b, \
-        caligraphE_F_0_mean_batch, caligraphE_F_1_mean_batch, caligraphE_F_2_mean_batch, caligraphE_F_3_mean_batch, bounds_batch\
-            = runBoundSimBatch(batchIter == 0, N, minBatchSize, sysModel, useCuda, pytorchEstimator, adversarialPlayersToolbox, dim_x, enableSmartPlayers, enableCausalPlayer)
+        caligraphE_minus_1_b, caligraphE_minus_1_mean_batch, \
+        caligraphE_0_b, caligraphE_1_b, caligraphE_2_b, caligraphE_3_b, \
+        caligraphE_0_mean_batch, caligraphE_1_mean_batch, caligraphE_2_mean_batch, caligraphE_3_mean_batch, bounds_batch\
+            = runBoundSimBatch(batchIter == 0, N, minBatchSize, sysModel, useCuda, pytorchEstimator, adversarialPlayersToolbox, dim_x, enableSmartPlayers, enableCausalPlayer, gamma, simType)
 
         if batchIter == 0:
-            caligraphE_F_minus_1_mean, caligraphE_F_0_mean, caligraphE_F_1_mean, caligraphE_F_2_mean, caligraphE_F_3_mean, bounds = caligraphE_F_minus_1_mean_batch, caligraphE_F_0_mean_batch, caligraphE_F_1_mean_batch, caligraphE_F_2_mean_batch, caligraphE_F_3_mean_batch, bounds_batch
+            caligraphE_minus_1_mean, caligraphE_0_mean, caligraphE_1_mean, caligraphE_2_mean, caligraphE_3_mean, bounds = caligraphE_minus_1_mean_batch, caligraphE_0_mean_batch, caligraphE_1_mean_batch, caligraphE_2_mean_batch, caligraphE_3_mean_batch, bounds_batch
         else:
-            caligraphE_F_minus_1_mean = np.divide(batchIter * caligraphE_F_minus_1_mean + caligraphE_F_minus_1_mean_batch, batchIter + 1)
-            caligraphE_F_0_mean = np.divide(batchIter * caligraphE_F_0_mean + caligraphE_F_0_mean_batch, batchIter + 1)
-            caligraphE_F_1_mean = np.divide(batchIter * caligraphE_F_1_mean + caligraphE_F_1_mean_batch, batchIter + 1)
-            caligraphE_F_2_mean = np.divide(batchIter * caligraphE_F_2_mean + caligraphE_F_2_mean_batch, batchIter + 1)
-            caligraphE_F_3_mean = np.divide(batchIter * caligraphE_F_3_mean + caligraphE_F_3_mean_batch, batchIter + 1)
+            caligraphE_minus_1_mean = np.divide(batchIter * caligraphE_minus_1_mean + caligraphE_minus_1_mean_batch, batchIter + 1)
+            caligraphE_0_mean = np.divide(batchIter * caligraphE_0_mean + caligraphE_0_mean_batch, batchIter + 1)
+            caligraphE_1_mean = np.divide(batchIter * caligraphE_1_mean + caligraphE_1_mean_batch, batchIter + 1)
+            caligraphE_2_mean = np.divide(batchIter * caligraphE_2_mean + caligraphE_2_mean_batch, batchIter + 1)
+            caligraphE_3_mean = np.divide(batchIter * caligraphE_3_mean + caligraphE_3_mean_batch, batchIter + 1)
             bounds = np.divide(np.add(np.multiply(batchIter, bounds), bounds_batch), batchIter + 1)
 
     fileName = fileName + '_N_' + np.array2string(np.array(N)) + '.pt'
 
     pickle.dump(
         [sysModel, dim_x, N,
-         caligraphE_F_minus_1_b, caligraphE_F_minus_1_mean,
-         caligraphE_F_0_b, caligraphE_F_1_b, caligraphE_F_2_b, caligraphE_F_3_b,
-         caligraphE_F_0_mean, caligraphE_F_1_mean, caligraphE_F_2_mean, caligraphE_F_3_mean, \
+         caligraphE_minus_1_b, caligraphE_minus_1_mean,
+         caligraphE_0_b, caligraphE_1_b, caligraphE_2_b, caligraphE_3_b,
+         caligraphE_0_mean, caligraphE_1_mean, caligraphE_2_mean, caligraphE_3_mean, \
          #tilde_z, tilde_x, processNoises, measurementNoises, filter_P_init, filterStateInit,
          #u_0, u_1, u_2, u_3,
          #tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f,
@@ -1389,7 +1740,7 @@ def runBoundSimulation(sysModel, pytorchEstimator, adversarialPlayersToolbox,  u
 
     return bounds, fileName
 
-def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adversarialPlayersToolbox, dim_x, enableSmartPlayers, enableCausalPlayer):
+def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adversarialPlayersToolbox, dim_x, enableSmartPlayers, enableCausalPlayer, gamma, simType):
     # create time-series measurements (#time-series == batchSize):
     tilde_z, tilde_x, processNoises, measurementNoises = GenMeasurements(N, batchSize, sysModel, startAtZero=False, dp=dp)  # z: [N, batchSize, dim_z]
     tilde_z, tilde_x, processNoises, measurementNoises = torch.tensor(tilde_z, dtype=torch.float), torch.tensor(tilde_x, dtype=torch.float), torch.tensor(processNoises, dtype=torch.float), torch.tensor(measurementNoises, dtype=torch.float)
@@ -1427,7 +1778,7 @@ def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adve
     u_0 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
     if useCuda:
         u_0 = u_0.cuda()
-    u_0 = noKnowledgePlayer(u_0)
+    u_0 = noKnowledgePlayer(u_0, gamma)
 
     if dp: print(f'mean energy of u_0: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_0).mean())}, ' [dbm]')
 
@@ -1440,8 +1791,8 @@ def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adve
         u_1, u_2, u_3 = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float), torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float), torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
         if useCuda:
             u_1, u_2, u_3 = u_1.cuda(), u_2.cuda(), u_3.cuda()
-        u_1, _ = noAccessPlayer(adversarialPlayersToolbox, u_1, torch.zeros_like(tilde_e_k_given_k_minus_1))  # tilde_e_k_given_k_minus_1 is given only for the window size calculation. It is legit
-        u_3 = geniePlayer(adversarialPlayersToolbox, u_3, tilde_e_k_given_k_minus_1)
+        u_1, _ = noAccessPlayer(adversarialPlayersToolbox, u_1, torch.zeros_like(tilde_e_k_given_k_minus_1), torch.zeros_like(tilde_e_k_given_N_minus_1), gamma, simType)  # tilde_e_k_given_k_minus_1 is given only for the window size calculation. It is legit
+        u_3 = geniePlayer(adversarialPlayersToolbox, u_3, tilde_e_k_given_k_minus_1, tilde_e_k_given_N_minus_1, gamma, simType)
         if enableCausalPlayer:
             u_2 = causalPlayer(adversarialPlayersToolbox, u_2, processNoises, tilde_x[0:1])
         else:
@@ -1450,7 +1801,7 @@ def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adve
         enableTestEnergyFactor = False
         if enableTestEnergyFactor:
             u_3_doubleEnergy = torch.zeros(N, batchSize, dim_x, 1, dtype=torch.float)
-            u_3_doubleEnergy = geniePlayer(adversarialPlayersToolbox, u_3_doubleEnergy, tilde_e_k_given_k_minus_1, 2)
+            u_3_doubleEnergy = geniePlayer(adversarialPlayersToolbox, u_3_doubleEnergy, tilde_e_k_given_k_minus_1, tilde_e_k_given_N_minus_1, gamma, simType, 2)
             if dp: print(f'mean energy of u_3: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3).mean())}, ' [dbm]')
             if dp: print(f'mean energy of u_3_doubleEnergy: ', {watt2dbm(calcTimeSeriesMeanEnergy(u_3_doubleEnergy).mean())}, ' [dbm]')
             plt.figure()
@@ -1476,7 +1827,8 @@ def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adve
         x_3_est_f, x_3_est_s = pytorchEstimator(z_3, filterStateInit)
 
         # bounds:
-        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, _ = computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f)
+        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound, _ = computeBounds(tilde_x, tilde_x_est_f, x_0_est_f, x_1_est_f, x_2_est_f, x_3_est_f, tilde_x_est_s, x_0_est_s, x_1_est_s, x_2_est_s, x_3_est_s, simType)
+
         bounds = (noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound)
 
         if dp: print(f'mean energy of tilde_x: ', {watt2dbm(calcTimeSeriesMeanEnergy(tilde_x).mean())}, ' [dbm]')
@@ -1488,45 +1840,65 @@ def runBoundSimBatch(dp, N, batchSize, sysModel, useCuda, pytorchEstimator, adve
         N, batchSize, dim_x = tilde_x.shape[0], tilde_x.shape[1], tilde_x.shape[2]
 
         tilde_e_k_given_k_minus_1 = tilde_x - tilde_x_est_f
-        caligraphE_F_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
-
         e_R_0_k_given_k_minus_1 = tilde_x - x_0_est_f
-        caligraphE_F_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
-
+        tilde_e_k_given_N_minus_1 = tilde_x - tilde_x_est_s
+        e_R_0_k_given_N_minus_1 = tilde_x - x_0_est_s
         if enableSmartPlayers:
             e_R_1_k_given_k_minus_1 = tilde_x - x_1_est_f
-            caligraphE_F_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
-
             e_R_2_k_given_k_minus_1 = tilde_x - x_2_est_f
-            caligraphE_F_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
-
             e_R_3_k_given_k_minus_1 = tilde_x - x_3_est_f
-            caligraphE_F_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
+            e_R_1_k_given_N_minus_1 = tilde_x - x_1_est_s
+            e_R_2_k_given_N_minus_1 = tilde_x - x_2_est_s
+            e_R_3_k_given_N_minus_1 = tilde_x - x_3_est_s
+
+
+        if simType == 'filtering':
+            caligraphE_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1).detach().cpu().numpy()
+            caligraphE_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1).detach().cpu().numpy()
+
+            if enableSmartPlayers:
+                caligraphE_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1).detach().cpu().numpy()
+                caligraphE_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1).detach().cpu().numpy()
+                caligraphE_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1).detach().cpu().numpy()
+
+        elif simType == 'smoothing':
+            caligraphE_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_N_minus_1).detach().cpu().numpy()
+            caligraphE_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_N_minus_1).detach().cpu().numpy()
+
+            if enableSmartPlayers:
+                caligraphE_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_N_minus_1).detach().cpu().numpy()
+                caligraphE_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_N_minus_1).detach().cpu().numpy()
+                caligraphE_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_N_minus_1).detach().cpu().numpy()
+
+        elif simType == 's_vs_f':
+            caligraphE_minus_1 = calcTimeSeriesMeanEnergyRunningAvg(tilde_e_k_given_k_minus_1 - tilde_e_k_given_N_minus_1).detach().cpu().numpy()
+            caligraphE_0 = calcTimeSeriesMeanEnergyRunningAvg(e_R_0_k_given_k_minus_1 - e_R_0_k_given_N_minus_1).detach().cpu().numpy()
+
+            if enableSmartPlayers:
+                caligraphE_1 = calcTimeSeriesMeanEnergyRunningAvg(e_R_1_k_given_k_minus_1 - e_R_1_k_given_N_minus_1).detach().cpu().numpy()
+                caligraphE_2 = calcTimeSeriesMeanEnergyRunningAvg(e_R_2_k_given_k_minus_1 - e_R_2_k_given_N_minus_1).detach().cpu().numpy()
+                caligraphE_3 = calcTimeSeriesMeanEnergyRunningAvg(e_R_3_k_given_k_minus_1 - e_R_3_k_given_N_minus_1).detach().cpu().numpy()
 
         batchIdx = 0
 
-        caligraphE_F_minus_1_b = caligraphE_F_minus_1[:, batchIdx]  # watt
-        # caligraphE_S_minus_1_b = caligraphE_S_minus_1[:, batchIdx]
+        caligraphE_minus_1_b = caligraphE_minus_1[:, batchIdx]  # watt
 
-        caligraphE_F_minus_1_mean = np.mean(caligraphE_F_minus_1, axis=1)  # watt
-        # caligraphE_F_minus_1_mean = np.power(np.mean(np.sqrt(caligraphE_F_minus_1), axis=1), 2)  # watt
-        # caligraphE_S_minus_1_mean = np.mean(caligraphE_S_minus_1, axis=1)  # watt
+        caligraphE_minus_1_mean = np.mean(caligraphE_minus_1, axis=1)  # watt
 
-        caligraphE_F_0_b = caligraphE_F_0[:, batchIdx]
-        caligraphE_F_0_mean = np.mean(caligraphE_F_0, axis=1)  # watt
-        # caligraphE_F_0_mean = np.power(np.mean(np.sqrt(caligraphE_F_0), axis=1), 2)  # watt
+        caligraphE_0_b = caligraphE_0[:, batchIdx]
+        caligraphE_0_mean = np.mean(caligraphE_0, axis=1)  # watt
 
         if enableSmartPlayers:
-            caligraphE_F_1_b = caligraphE_F_1[:, batchIdx]
-            caligraphE_F_1_mean = np.mean(caligraphE_F_1, axis=1)  # watt
+            caligraphE_1_b = caligraphE_1[:, batchIdx]
+            caligraphE_1_mean = np.mean(caligraphE_1, axis=1)  # watt
 
-            caligraphE_F_2_b = caligraphE_F_2[:, batchIdx]
-            caligraphE_F_2_mean = np.mean(caligraphE_F_2, axis=1)  # watt
+            caligraphE_2_b = caligraphE_2[:, batchIdx]
+            caligraphE_2_mean = np.mean(caligraphE_2, axis=1)  # watt
 
-            caligraphE_F_3_b = caligraphE_F_3[:, batchIdx]
-            caligraphE_F_3_mean = np.mean(caligraphE_F_3, axis=1)  # watt
+            caligraphE_3_b = caligraphE_3[:, batchIdx]
+            caligraphE_3_mean = np.mean(caligraphE_3, axis=1)  # watt
 
-    return caligraphE_F_minus_1_b, caligraphE_F_minus_1_mean, caligraphE_F_0_b, caligraphE_F_1_b, caligraphE_F_2_b, caligraphE_F_3_b, caligraphE_F_0_mean, caligraphE_F_1_mean, caligraphE_F_2_mean, caligraphE_F_3_mean, bounds
+    return caligraphE_minus_1_b, caligraphE_minus_1_mean, caligraphE_0_b, caligraphE_1_b, caligraphE_2_b, caligraphE_3_b, caligraphE_0_mean, caligraphE_1_mean, caligraphE_2_mean, caligraphE_3_mean, bounds
 
 def knowledgeGate(Q_cholesky, R_cholesky, playerType, processNoises, measurementNoises, device):
     N, batchSize, dim_x, dim_z = processNoises.shape[0], processNoises.shape[1], processNoises.shape[2], measurementNoises.shape[2]
