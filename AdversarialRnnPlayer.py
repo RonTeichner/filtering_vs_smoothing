@@ -17,9 +17,9 @@ enableTrain = True
 enableTest = False
 enableTestCausal = False
 
-simType = 's_vs_f'  # {'filtering', 'smoothing', 's_vs_f'}
+simType = 'smoothing'  # {'filtering', 'smoothing', 's_vs_f'}
 
-fileName = 'sys2D_FilteringVsSmoothing'  #'sys2D_secondTry' #  'sys2D_secondTry'
+fileName = 'sys2D_Smoothing'#'sys2DUnstable_Smoothing'#'sys2D_Smoothing'#'sys2D_FilteringVsSmoothing'  #'sys2D_secondTry' #  'sys2D_secondTry'
 useCuda = True
 if useCuda:
     device = 'cuda'
@@ -32,7 +32,7 @@ dp = False
 
 lowThrLr = 1e-6
 
-playerType = 'NoAccess'  # {NoKnowledge', 'NoAccess', 'Causal', 'Genie'}
+playerType = 'Genie'  # {NoKnowledge', 'NoAccess', 'Causal', 'Genie'}
 
 if playerType == 'NoKnowledge':
     p = 0
@@ -132,6 +132,7 @@ class RNN_Adversarial(nn.Module):
 
 # Define player
 print("Build RNN player model ...")
+print(f'gamma = {gamma}')
 player = RNN_Adversarial(input_dim=N*(dim_x + dim_z), hidden_dim=hidden_size, output_dim=N*dim_x, num_layers=num_layers, gamma=gamma).to(device=device)
 
 optimizer = optim.Adam(player.parameters(), lr=0.001)

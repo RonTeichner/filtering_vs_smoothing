@@ -13,45 +13,53 @@ import time
 
 enablePlotOnly = False#True
 enableInvestigateAllN = False#False
-enableReadAllFiles = False
-enableGammaPlot = True
+enableReadAllFiles = True
+enableGammaPlot = False
 
 gammaValues = np.arange(0, 0.4, 0.1/5).tolist()
 gammaValues[0] = 1e-6
 
 enableLimitSearch = False
 
-simType = 's_vs_f'  #{'filtering', 'smoothing', 's_vs_f'}
-fileName = 'sys2D_FilteringVsSmoothing' #'sys2D_FilteringVsSmoothing', 'sys2D_Smoothing'
+simType = 'smoothing'  #{'filtering', 'smoothing', 's_vs_f'}
+fileName = 'sys2D_Smoothing'#'sys2D_Smoothing'#'sys2DUnstable_Smoothing' #'sys2D_FilteringVsSmoothing', 'sys2D_Smoothing'
+fileNamesForGammaPlot = ['sys2DUnstable_Smoothing', 'sys2D_Smoothing']
 
 if enableReadAllFiles:
-    fileName = fileName + '_allN_'
-    #N_list = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 30, 40, 50, 60,
-    #          70, 80, 90, 100]
-    N_list = [2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 20, 30, 40, 50, 60,
-              70, 80, 90, 100]
-    noPlayerBound_list, noKnowledgePlayerBound_list, noAccessPlayerBound_list, causlaPlayerBound_list, geniePlayerBound_list = list(), list(), list(), list(), list()
-    for N in N_list:
-        savedList = pickle.load(open(fileName + '_N_' + str(N) +'.pt', "rb"))
-        _, _, _, _, _, _, _, _, _, _, _, _, _, barSigma, _, _, _, bounds = savedList
-        noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = bounds
-        noPlayerBound_list.append(noPlayerBound)
-        noKnowledgePlayerBound_list.append(noKnowledgePlayerBound)
-        noAccessPlayerBound_list.append(noAccessPlayerBound)
-        causlaPlayerBound_list.append(causlaPlayerBound)
-        geniePlayerBound_list.append(geniePlayerBound)
-    plt.figure()
-    causlaPlayerBound_list[-1] = noAccessPlayerBound_list[-1] * np.power(10, 0.03 / 10)
-    plt.plot(N_list, watt2db(np.divide(noAccessPlayerBound_list, noPlayerBound_list)), color='red', label=r'$p=1$')
-    plt.plot(N_list, watt2db(np.divide(causlaPlayerBound_list, noPlayerBound_list)), color='brown', label=r'$p=2$')
-    plt.plot(N_list, watt2db(np.divide(geniePlayerBound_list, noPlayerBound_list)), color='orange', label=r'$p=3$')
+    plt.figure(figsize=(16 / 3, 9 / 3))
+    for fileName in fileNamesForGammaPlot:
+        fileName = fileName + '_allN_'
+        #N_list = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 30, 40, 50, 60,
+        #          70, 80, 90, 100]
+        N_list = [2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 20, 30, 40, 50, 60,
+                  70, 80, 90, 100, 200]
+        noPlayerBound_list, noKnowledgePlayerBound_list, noAccessPlayerBound_list, causlaPlayerBound_list, geniePlayerBound_list = list(), list(), list(), list(), list()
+        for N in N_list:
+            savedList = pickle.load(open(fileName + '_N_' + str(N) +'.pt', "rb"))
+            _, _, _, _, _, _, _, _, _, _, _, _, _, barSigma, _, _, _, bounds = savedList
+            noPlayerBound, noKnowledgePlayerBound, noAccessPlayerBound, causlaPlayerBound, geniePlayerBound = bounds
+            noPlayerBound_list.append(noPlayerBound)
+            noKnowledgePlayerBound_list.append(noKnowledgePlayerBound)
+            noAccessPlayerBound_list.append(noAccessPlayerBound)
+            causlaPlayerBound_list.append(causlaPlayerBound)
+            geniePlayerBound_list.append(geniePlayerBound)
+
+        causlaPlayerBound_list[-1] = noAccessPlayerBound_list[-1] * np.power(10, 0.03 / 10)
+        #plt.plot(N_list, watt2db(np.divide(noAccessPlayerBound_list, noPlayerBound_list)), color='red', label=r'$p=1$')
+        #plt.plot(N_list, watt2db(np.divide(causlaPlayerBound_list, noPlayerBound_list)), color='brown', label=r'$p=2$')
+        #plt.plot(N_list, watt2db(np.divide(geniePlayerBound_list, noPlayerBound_list)), color='orange', label=r'$p=3$')
+        if fileName == 'sys2DUnstable_Smoothing' + '_allN_':
+            plt.plot(N_list, watt2db(np.divide(geniePlayerBound_list, noPlayerBound_list)), '--', linewidth=2)#color='orange', label=r'$p=3$')
+        else:
+            plt.plot(N_list, watt2db(np.divide(geniePlayerBound_list, noPlayerBound_list)), linewidth=2)#color='orange', label=r'$p=3$')
     plt.xlabel('N')
     plt.ylabel('db')
-    plt.title(r'$B^{(p)}_N$')
+    plt.title(r'$S_N$')
     plt.grid()
-    plt.legend()
+    #plt.legend()
+    plt.tight_layout()
     plt.show()
-    x=3
+    exit()
 
 
 if enablePlotOnly:
@@ -75,14 +83,14 @@ if enablePlotOnly:
 if enableInvestigateAllN:
     useCuda = False
     mistakeBound, delta_trS = 1 * 1e-2, 1 * 1e-2
-    enableCausalPlayer = True
+    enableCausalPlayer = False
     savedList = pickle.load(open(fileName + '_final_' + '.pt', "rb"))
-    sysModel, _, _, _, _, _, _, _, _, _ = savedList
+    sysModel, _, _, _, _, _, _, _, _, _, gamma = savedList
     fileName = fileName + '_allN_'
     pytorchEstimator = Pytorch_filter_smoother_Obj(sysModel, enableSmoothing=True, useCuda=useCuda)
     delta_u, delta_caligraphE = 1e-3, 1e-3
     adversarialPlayersToolbox = playersToolbox(pytorchEstimator, delta_u, delta_caligraphE, True)
-    N_list = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,30,40,50,60,70,80,90,100]
+    N_list = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,30,40,50,60,70,80,90,100,200]
     bounds_N_list = list()
     for N in N_list:
         print(f'all N calculations, N = {N}')
@@ -92,17 +100,24 @@ if enableInvestigateAllN:
     exit()
 
 if enableGammaPlot:
-    savedGammaResults = pickle.load(open(fileName + '_gammaResults.pt', 'rb'))
-    sysModel, N, gammaResultList = savedGammaResults
-    tr_Q = np.trace(sysModel['Q'])
-    gammaValues = [gammaRes[0] for gammaRes in gammaResultList]
-    genieBound = [gammaRes[1][4] for gammaRes in gammaResultList]
-    #plt.figure(figsize=(5,3))
-    plt.plot(gammaValues/tr_Q, genieBound)
+    plt.figure(figsize=(16/3,9/3))
+    for fileName in fileNamesForGammaPlot:
+        savedGammaResults = pickle.load(open(fileName + '_gammaResults.pt', 'rb'))
+        sysModel, N, gammaResultList = savedGammaResults
+        tr_Q = np.trace(sysModel['Q'])
+        gammaValues = [gammaRes[0] for gammaRes in gammaResultList]
+        genieBound = [gammaRes[1][4] for gammaRes in gammaResultList]
+        #plt.figure(figsize=(5,3))
+        if fileName == 'sys2DUnstable_Smoothing':
+            plt.plot(gammaValues/tr_Q, genieBound, '--', linewidth=2)
+        else:
+            plt.plot(gammaValues / tr_Q, genieBound, linewidth=2)
     plt.grid()
-    plt.xlabel(r'${\gamma}/{tr(Q)}$', fontsize=12)
-    plt.ylabel(r'$I_{N}(\gamma)$ [Watt]', fontsize=16)
+    plt.xlabel(r'${\gamma}/{tr(Q)}$', fontsize=14)
+    plt.ylabel(r'$S_{N}(\gamma)$ [Watt]', fontsize=16)
+    plt.title(r'$S_{N}(\gamma) = \sum_{k=0}^{N-1} ||e_{k \mid N-1}||_2^2$', fontsize=14)
     #plt.title(r'$I_{N}(\gamma) = \sum_{k=0}^{N-1} ||e_{k \mid k-1}||_2^2 - ||e_{k \mid N-1}||_2^2$', fontsize=14)
+    plt.tight_layout()
     plt.show()
     exit()
 
@@ -129,6 +144,8 @@ np.random.seed(seed)  #  for 2D systems, seed=13 gives two control angles, seed=
 
 # create a single system model:
 sysModel = GenSysModel(dim_x, dim_z)
+if fileName == 'sys2DUnstable_Smoothing':
+    sysModel['F'] = sysModel['F']/np.abs(np.linalg.eigvals(sysModel['F'])).max()*1.0406
 
 # calc bound on initialN:
 N = initialN
@@ -218,7 +235,7 @@ else:
                     open(fileName + '_final_' + '.pt', 'wb'))
 
         print('bounds file saved')
-        if simType in {'s_vs_f'}:
+        if simType in {'s_vs_f','smoothing'}:
             print(f'no player bound is {(bounds_N[0])} W')
             print(f'no knowledge bound is {(bounds_N[1])} W')
             print(f'no access bound is {(bounds_N[2])} W')
@@ -234,7 +251,8 @@ else:
             # plotting:
             adversarialPlayerPlotting(currentFileName_N, simType)
             plt.show()
-    if simType in {'s_vs_f'}:
+    if simType in {'s_vs_f','smoothing'}:
         pickle.dump([sysModel, N, gammaResultList], open(fileName + '_gammaResults.pt', 'wb'))
+        print('saved file: ' + fileName + '_gammaResults.pt')
 
 
